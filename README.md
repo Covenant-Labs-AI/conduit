@@ -28,6 +28,19 @@ It gives developers **type-safe**, **high-flexibility** building blocks for depl
 
 ---
 
+
+
+## 📦 Installation
+
+### Requirements
+- **Python 3.12.6** or newer
+
+### Install from GitHub (latest)
+
+```bash
+pip install "git+https://github.com/Covenant-Labs-AI/conduit.git@main"
+
+```
 ## 🔥 LMLite — AI Inference Runtime
 
 Conduit integrates seamlessly with **LMLite** — our multi-model/multi-GPU batching engine (still under development!).  
