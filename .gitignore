@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+build/
+dist/
+*.egg-info/
+*.swp
+build.sh
+conduit.json
+test.py
+logs
+*.bin
+*.jsonl
+*.db
