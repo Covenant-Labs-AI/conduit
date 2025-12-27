@@ -3,9 +3,38 @@ from typing import List, Optional
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from conduit.conduit_types import GPUS
+from conduit.compute_provider.runpod import GPUS
 from conduit.runtime import LMLiteBlock
-from conduit import ModelConfig, ComputeProvider
+from conduit import LmLiteModelConfig, ComputeProvider
+
+
+# -----------------------------------------------------------------------------
+# Demo: High-throughput batch inference on Runpod GPUs with LMLite (concurrency + replicas)
+#
+# This example demonstrates how LMLite handles *many simultaneous requests* by
+# combining:
+#   - client-side parallelism (ThreadPoolExecutor)
+#   - server-side request pooling / batching (max_model_concurrency + batch timeout)
+#   - horizontal scaling (multiple replicas with round-robin load balancing)
+#
+# What it does:
+#   1) Deploys a model on ComputeProvider.RUNPOD and pins a specific GPU type
+#      (e.g., NVIDIA L4) for predictable performance/cost characteristics.
+#   2) Configures LMLite to queue incoming requests into batches:
+#        - max_model_concurrency sets the request pool size (effective batch queue)
+#        - model_batch_execute_timeout_ms controls how long to wait to form a batch
+#   3) Spins up 2 replicas, so multiple model instances share the load.
+#   4) Waits for the container healthcheck (block.ready) before sending traffic.
+#   5) Fires 100 concurrent inference calls from the client and prints completion
+#      times to visualize throughput/latency under load.
+#   6) Deletes the deployment at the end to clean up resources.
+#
+# Notes:
+#   - This is a benchmarking / scaling pattern: tune concurrency, batch timeout,
+#     replica count, and client parallelism together based on your latency SLOs.
+#   - ThreadPoolExecutor here is only simulating many callers; in production you
+#     might have an async web server or job queue driving these requests.
+# -----------------------------------------------------------------------------
 
 
 def test_batch_processing_with_mdl(
@@ -19,7 +48,7 @@ def test_batch_processing_with_mdl(
         models=[
             # Add as many models as you want! Conduit will calculate model and GPU
             # requirements and throw an error if something doesn't fit.
-            ModelConfig(
+            LmLiteModelConfig(
                 model_id,  # HF model id
                 max_model_len=1400,  # total tokens per individual request input AND output
                 max_model_concurrency=50,  # batch size pool, LMLite queues and processes requests in batches
@@ -29,7 +58,7 @@ def test_batch_processing_with_mdl(
         compute_provider=ComputeProvider.RUNPOD,  # choose compute provider (only RUNPOD atm)
         # choose a specific GPU OR by default Conduit will optimize for VRAM efficiency
         # on smallest possible GPU for your model(s) requirements
-        gpu=GPUS.NVIDIA_L4,
+        gpu=GPUS.L4,
         # default = 1. Makes many copies of LMLite; this setup uses a simple
         # round-robin load balancing strategy across replicas.
         replicas=2,

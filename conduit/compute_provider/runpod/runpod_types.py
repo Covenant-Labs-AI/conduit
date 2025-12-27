@@ -1,24 +1,30 @@
-import requests
 from enum import Enum
-from dataclasses import asdict
-from dataclasses import dataclass, field, asdict
-from conduit.compute_provider.base import ContainerInfo, ContainerRuntimeProvider
-from typing import Dict, List, Mapping, Optional, Literal, Any
-from dacite import from_dict
-
-
-def drop_nones(obj):
-    if isinstance(obj, dict):
-        return {k: drop_nones(v) for k, v in obj.items() if v is not None}
-    elif isinstance(obj, list):
-        return [drop_nones(v) for v in obj if v is not None]
-    return obj
+from dataclasses import dataclass, field
+from typing import Literal, List, Dict, Final, Annotated, Optional, Any
 
 
 class Category(str, Enum):
     NVIDIA = "NVIDIA"
     AMD = "AMD"
     CPU = "CPU"
+
+
+@dataclass(frozen=True)
+class RunpodGpuType:
+    id: str
+    secureCloud: bool
+    communityCloud: bool
+    maxGpuCount: int
+    maxGpuCountCommunityCloud: int
+    maxGpuCountSecureCloud: int
+    securePrice: float
+    memoryInGb: int
+    communityPrice: float
+    minPodGpuCount: Optional[int]
+    nodeGroupGpuSizes: Optional[
+        List[int]
+    ]  # this seems to only work for the A100,H200, H100's
+    nodeGroupDatacenters: Optional[List[Dict[str, Any]]]
 
 
 # ---------- Enums (as Literals) ----------
@@ -103,6 +109,152 @@ GpuTypeId = Literal[
     "NVIDIA B200",
 ]
 
+
+class GPUS:
+    RTX_4090: Final[Annotated[Literal["NVIDIA GeForce RTX 4090"], "VRAM: 24 GB"]] = (
+        "NVIDIA GeForce RTX 4090"
+    )
+    A40: Final[Annotated[Literal["NVIDIA A40"], "VRAM: 48 GB"]] = "NVIDIA A40"
+    RTX_A5000: Final[Annotated[Literal["NVIDIA RTX A5000"], "VRAM: 24 GB"]] = (
+        "NVIDIA RTX A5000"
+    )
+    RTX_3090: Final[Annotated[Literal["NVIDIA GeForce RTX 3090"], "VRAM: 24 GB"]] = (
+        "NVIDIA GeForce RTX 3090"
+    )
+    RTX_A4500: Final[Annotated[Literal["NVIDIA RTX A4500"], "VRAM: 20 GB"]] = (
+        "NVIDIA RTX A4500"
+    )
+    RTX_A6000: Final[Annotated[Literal["NVIDIA RTX A6000"], "VRAM: 48 GB"]] = (
+        "NVIDIA RTX A6000"
+    )
+    L40S: Final[Annotated[Literal["NVIDIA L40S"], "VRAM: 48 GB"]] = "NVIDIA L40S"
+    L4: Final[Annotated[Literal["NVIDIA L4"], "VRAM: 24 GB"]] = "NVIDIA L4"
+    H100_80GB_HBM3: Final[
+        Annotated[Literal["NVIDIA H100 80GB HBM3"], "VRAM: 80 GB"]
+    ] = "NVIDIA H100 80GB HBM3"
+    RTX_4000_ADA: Final[
+        Annotated[Literal["NVIDIA RTX 4000 Ada Generation"], "VRAM: 20 GB"]
+    ] = "NVIDIA RTX 4000 Ada Generation"
+    A100_80GB_PCIE: Final[
+        Annotated[Literal["NVIDIA A100 80GB PCIe"], "VRAM: 80 GB"]
+    ] = "NVIDIA A100 80GB PCIe"
+    A100_SXM4_80GB: Final[
+        Annotated[Literal["NVIDIA A100-SXM4-80GB"], "VRAM: 80 GB"]
+    ] = "NVIDIA A100-SXM4-80GB"
+    RTX_A4000: Final[Annotated[Literal["NVIDIA RTX A4000"], "VRAM: 16 GB"]] = (
+        "NVIDIA RTX A4000"
+    )
+    RTX_6000_ADA: Final[
+        Annotated[Literal["NVIDIA RTX 6000 Ada Generation"], "VRAM: 48 GB"]
+    ] = "NVIDIA RTX 6000 Ada Generation"
+    RTX_2000_ADA: Final[
+        Annotated[Literal["NVIDIA RTX 2000 Ada Generation"], "VRAM: 16 GB"]
+    ] = "NVIDIA RTX 2000 Ada Generation"
+    H200: Final[Annotated[Literal["NVIDIA H200"], "VRAM: 141 GB"]] = "NVIDIA H200"
+    L40: Final[Annotated[Literal["NVIDIA L40"], "VRAM: 48 GB"]] = "NVIDIA L40"
+    H100_NVL: Final[Annotated[Literal["NVIDIA H100 NVL"], "VRAM: 94 GB"]] = (
+        "NVIDIA H100 NVL"
+    )
+    H100_PCIE: Final[Annotated[Literal["NVIDIA H100 PCIe"], "VRAM: 80 GB"]] = (
+        "NVIDIA H100 PCIe"
+    )
+    RTX_3080_TI: Final[
+        Annotated[Literal["NVIDIA GeForce RTX 3080 Ti"], "VRAM: 12 GB"]
+    ] = "NVIDIA GeForce RTX 3080 Ti"
+    RTX_3080: Final[Annotated[Literal["NVIDIA GeForce RTX 3080"], "VRAM: 10 GB"]] = (
+        "NVIDIA GeForce RTX 3080"
+    )
+    RTX_3070: Final[Annotated[Literal["NVIDIA GeForce RTX 3070"], "VRAM: 8 GB"]] = (
+        "NVIDIA GeForce RTX 3070"
+    )
+    V100_PCIE_16GB: Final[Annotated[Literal["Tesla V100-PCIE-16GB"], "VRAM: 16 GB"]] = (
+        "Tesla V100-PCIE-16GB"
+    )
+    MI300X_OAM: Final[Annotated[Literal["AMD Instinct MI300X OAM"], "VRAM: 192 GB"]] = (
+        "AMD Instinct MI300X OAM"
+    )
+    RTX_A2000: Final[Annotated[Literal["NVIDIA RTX A2000"], "VRAM: 12 GB"]] = (
+        "NVIDIA RTX A2000"
+    )
+    V100_FHHL_16GB: Final[Annotated[Literal["Tesla V100-FHHL-16GB"], "VRAM: 16 GB"]] = (
+        "Tesla V100-FHHL-16GB"
+    )
+    RTX_4080_SUPER: Final[
+        Annotated[Literal["NVIDIA GeForce RTX 4080 SUPER"], "VRAM: 16 GB"]
+    ] = "NVIDIA GeForce RTX 4080 SUPER"
+    V100_SXM2_16GB: Final[Annotated[Literal["Tesla V100-SXM2-16GB"], "VRAM: 16 GB"]] = (
+        "Tesla V100-SXM2-16GB"
+    )
+    RTX_4070_TI: Final[
+        Annotated[Literal["NVIDIA GeForce RTX 4070 Ti"], "VRAM: 12 GB"]
+    ] = "NVIDIA GeForce RTX 4070 Ti"
+    V100_SXM2_32GB: Final[Annotated[Literal["Tesla V100-SXM2-32GB"], "VRAM: 32 GB"]] = (
+        "Tesla V100-SXM2-32GB"
+    )
+    RTX_4000_SFF_ADA: Final[
+        Annotated[Literal["NVIDIA RTX 4000 SFF Ada Generation"], "VRAM: 20 GB"]
+    ] = "NVIDIA RTX 4000 SFF Ada Generation"
+    RTX_5000_ADA: Final[
+        Annotated[Literal["NVIDIA RTX 5000 Ada Generation"], "VRAM: 32 GB"]
+    ] = "NVIDIA RTX 5000 Ada Generation"
+    RTX_5090: Final[Annotated[Literal["NVIDIA GeForce RTX 5090"], "VRAM: 32 GB"]] = (
+        "NVIDIA GeForce RTX 5090"
+    )
+    A30: Final[Annotated[Literal["NVIDIA A30"], "VRAM: 24 GB"]] = "NVIDIA A30"
+    RTX_4080: Final[Annotated[Literal["NVIDIA GeForce RTX 4080"], "VRAM: 16 GB"]] = (
+        "NVIDIA GeForce RTX 4080"
+    )
+    RTX_5080: Final[Annotated[Literal["NVIDIA GeForce RTX 5080"], "VRAM: 16 GB"]] = (
+        "NVIDIA GeForce RTX 5080"
+    )
+    RTX_3090_TI: Final[
+        Annotated[Literal["NVIDIA GeForce RTX 3090 Ti"], "VRAM: 24 GB"]
+    ] = "NVIDIA GeForce RTX 3090 Ti"
+    B200: Final[Annotated[Literal["NVIDIA B200"], "VRAM: 180 GB"]] = "NVIDIA B200"
+
+
+VRAM_GB_BY_GPU_ID: dict[str, int] = {
+    "NVIDIA GeForce RTX 4090": 24,
+    "NVIDIA A40": 48,
+    "NVIDIA RTX A5000": 24,
+    "NVIDIA GeForce RTX 3090": 24,
+    "NVIDIA RTX A4500": 20,
+    "NVIDIA RTX A6000": 48,
+    "NVIDIA L40S": 48,
+    "NVIDIA L4": 24,
+    "NVIDIA H100 80GB HBM3": 80,
+    "NVIDIA RTX 4000 Ada Generation": 20,
+    "NVIDIA A100 80GB PCIe": 80,
+    "NVIDIA A100-SXM4-80GB": 80,
+    "NVIDIA RTX A4000": 16,
+    "NVIDIA RTX 6000 Ada Generation": 48,
+    "NVIDIA RTX 2000 Ada Generation": 16,
+    "NVIDIA H200": 141,
+    "NVIDIA L40": 48,
+    "NVIDIA H100 NVL": 94,
+    "NVIDIA H100 PCIe": 80,
+    "NVIDIA GeForce RTX 3080 Ti": 12,
+    "NVIDIA GeForce RTX 3080": 10,
+    "NVIDIA GeForce RTX 3070": 8,
+    "Tesla V100-PCIE-16GB": 16,
+    "AMD Instinct MI300X OAM": 192,
+    "NVIDIA RTX A2000": 12,
+    "Tesla V100-FHHL-16GB": 16,
+    "NVIDIA GeForce RTX 4080 SUPER": 16,
+    "Tesla V100-SXM2-16GB": 16,
+    "NVIDIA GeForce RTX 4070 Ti": 12,
+    "Tesla V100-SXM2-32GB": 32,
+    "NVIDIA RTX 4000 SFF Ada Generation": 20,
+    "NVIDIA RTX 5000 Ada Generation": 32,
+    "NVIDIA GeForce RTX 5090": 32,
+    "NVIDIA A30": 24,
+    "NVIDIA GeForce RTX 4080": 16,
+    "NVIDIA GeForce RTX 5080": 16,
+    "NVIDIA GeForce RTX 3090 Ti": 24,
+    "NVIDIA B200": 180,
+}
+
+
 DesiredStatus = Literal["RUNNING", "EXITED", "TERMINATED"]
 
 
@@ -182,9 +334,6 @@ class PodCreateRequest:
                     raise ValueError(
                         f"Port '{p}' must be formatted as '<number>/<protocol>'."
                     )
-
-
-# ---- Nested dataclasses ----
 
 
 @dataclass
@@ -293,95 +442,24 @@ class PodResponse:
     dockerStartCmd: Optional[List[str]] = field(default_factory=list)
 
 
-class Runpod(ContainerRuntimeProvider):
-    BASE_URL = "https://rest.runpod.io/v1"
-
-    def __init__(self, token: str):
-        self.token = token
-        self.api_headers = {
-            "Authorization": f"Bearer {self.token}",
-            "Content-Type": "application/json",
-        }
-
-    @classmethod
-    def serialize_create_response(cls, create_response: PodResponse) -> ContainerInfo:
-        return ContainerInfo(
-            id=create_response.id,
-            public_ip=create_response.publicIp,
-            port_map=create_response.portMappings,
-        )
-
-    @classmethod
-    def serialize_start_external_id(cls, create_response: PodResponse) -> str:
-        return create_response.id
-
-    def get_container(self, container_id: str) -> PodResponse:
-        response = requests.get(
-            self.BASE_URL + f"/pods/{container_id}", headers=self.api_headers
-        )
-        try:
-            response.raise_for_status()
-        except requests.exceptions.HTTPError as e:
-            raise Exception(f"GET /pods/{container_id} failed: {response.text}") from e
-        pod = from_dict(data_class=PodResponse, data=response.json())
-        return pod
-
-    def start_container(self, input: PodCreateRequest) -> PodResponse:
-        payload = drop_nones(asdict(input))
-        response = requests.post(
-            self.BASE_URL + "/pods", headers=self.api_headers, json=payload
-        )
-        try:
-            response.raise_for_status()
-        except requests.exceptions.HTTPError as e:
-            raise Exception(f"POST /pods failed: {response.text}") from e
-        pod = from_dict(data_class=PodResponse, data=response.json())
-        return pod
-
-    def terminate_container(self, container_id: str) -> None:
-        response = requests.delete(
-            self.BASE_URL + f"/pods/{container_id}", headers=self.api_headers
-        )
-        try:
-            response.raise_for_status()
-        except requests.exceptions.HTTPError as e:
-            raise Exception(
-                f"DELETE /pods/{container_id} failed: {response.text}"
-            ) from e
-
-
-### Contract Tests
-def test_template_deploy():
-    import os
-    import time
-
-    runpod_client = Runpod(token=os.environ.get("RUNPOD_API_KEY"))
-    input = PodCreateRequest(
-        templateId="lfzit4klmi", gpuTypeIds=["NVIDIA A100-SXM4-80GB"]
-    )
-    container = runpod_client.start_container(input=input)
-    while True:
-        time.sleep(10)
-        container = runpod_client.get_container(container.id)
-        time.sleep(10)
-        runpod_client.terminate_container(container.id)
-        break
-
-def test_image_deploy():
-    import os
-    import time
-
-    runpod_client = Runpod(token=os.environ.get("RUNPOD_API_KEY"))
-    input = PodCreateRequest(
-        imageName="registry.covenantlabs.ai/runlet-0.10.0:latest",
-        containerRegistryAuthId="cmgty2b930001jx02krfd4c5o",
-        gpuTypeIds=["NVIDIA A100-SXM4-80GB"],
-    )
-    container = runpod_client.start_container(input=input)
-    while True:
-        time.sleep(10)
-        container = runpod_client.get_container(container.id)
-        print(container)
-        time.sleep(10)
-        runpod_client.terminate_container(container.id)
-        break
+__all__ = [
+    # enums / constants
+    "Category",
+    "CudaVersion",
+    "CloudType",
+    "ComputeType",
+    "Priority",
+    "CpuFlavorId",
+    "DataCenterId",
+    "GpuTypeId",
+    "GPUS",
+    "VRAM_GB_BY_GPU_ID",
+    "DesiredStatus",
+    "PodCreateRequest",
+    "GPUInfo",
+    "CPUTypeInfo",
+    "MachineInfo",
+    "NetworkVolumeInfo",
+    "SavingsPlanInfo",
+    "PodResponse",
+]

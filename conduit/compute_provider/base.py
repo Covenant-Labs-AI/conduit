@@ -1,7 +1,11 @@
 from abc import ABC, abstractmethod
-from typing import Dict
+from typing import Dict, TypedDict
 
 from dataclasses import dataclass
+
+
+class EnvConfig(TypedDict):
+    env: Dict[str, str]
 
 
 @dataclass
@@ -17,7 +21,15 @@ class ContainerRuntimeProvider(ABC):
         pass
 
     @abstractmethod
-    def start_container(self) -> str:  # id of created resource
+    def start_container(self) -> str:
+        pass
+
+    @abstractmethod
+    def restart_container(self):
+        pass
+
+    @abstractmethod
+    def stop_container(self):
         pass
 
     @abstractmethod

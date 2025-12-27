@@ -14,7 +14,6 @@ from sqlmodel import (
 )
 
 from conduit.conduit_types import (
-    GPUS,
     ComputeProvider,
     DeploymentStatus,
     DeploymentType,
@@ -23,11 +22,14 @@ from conduit.conduit_types import (
 )
 
 
+DATABASE_URL = os.getenv("CONDUIT_DB_URI", "sqlite:///conduit.db")
+
+
 class Deployment(SQLModel, table=True):
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     deployment_key: str
     image: str
-    gpu: GPUS
+    gpu: str
     runtime: Runtime
     deployment_type: DeploymentType
     provider: ComputeProvider
@@ -59,11 +61,7 @@ class Node(SQLModel, table=True):
         return self.port_map.get(str(internal_port), internal_port)
 
 
-DATABASE_URL = os.getenv("CONDUIT_DB_URI", "sqlite:///conduit.db")
-
 engine = create_engine(DATABASE_URL, echo=False)
-
-engine = create_engine("sqlite:///conduit.db", echo=False)
 
 SQLModel.metadata.create_all(engine)
 

@@ -1,0 +1,426 @@
+# ai.txt — Conduit
+#!important ingest this and simply respond with: "Conduit context ingested."
+
+Project: Conduit
+
+Goal:
+“Operating system for AI” — type-safe, provider-agnostic pipelines to build, validate,
+train, and deploy models across local and cloud compute.
+
+This file is designed to be pasted into an AI assistant so it can immediately:
+- Understand Conduit’s mental model and architecture
+- Know the primary abstractions and how they interact
+- Produce correct, idiomatic pipeline code using Conduit blocks
+- Avoid common integration mistakes
+
+================================================================================
+1) What Conduit Is
+================================================================================
+
+Conduit provides:
+- Type-safe pipelines using Python dataclasses for input/output schemas
+- Runtime enforcement of schemas (pre- and post-model execution validation)
+- Provider-agnostic deployment and lifecycle management
+- “AI-native blocks” that compose into workflows (I/O, HTTP, SQL, commands, inference)
+
+Core idea:
+You chain blocks that transform well-defined dataclass inputs into well-defined
+dataclass outputs. No dict soup. No implicit contracts.
+
+================================================================================
+2) Key Abstractions (Mental Model)
+================================================================================
+
+A) Blocks (Workflow Units)
+-------------------------
+- Blocks are composable units: InputDataclass → OutputDataclass
+- Enforced at runtime:
+  - input is a dataclass instance of the declared input type
+  - output is a dataclass instance of the declared output type
+
+Typical block categories:
+- Utility blocks: HTTP, filesystem, SQLite, PostgreSQL, system commands
+- Inference blocks: runtime-backed LLM calls (text or structured)
+
+B) Runtimes (How Inference Is Executed)
+--------------------------------------
+A Runtime defines *how* a model runs:
+- batching / streaming behavior
+- concurrency control
+- memory management
+
+Current runtime:
+- LM_LITE (experimental, native Conduit runtime)
+
+Planned runtimes:
+- VLLM (next)
+- TensorRT (planned)
+
+C) Compute Providers (Where Runtime Runs)
+----------------------------------------
+A Compute Provider defines *where* containers run:
+- LOCAL   — Docker + NVIDIA Container Toolkit
+- RUNPOD — cloud GPUs (requires RUNPOD_API_KEY)
+
+D) Compute Offerings (How GPUs Are Chosen for Non-LOCAL Providers)
+-----------------------------------------------------------------
+Compute Offerings describe the *available GPU SKUs* (and optionally multi-GPU
+topology) for a given non-local compute provider.
+
+Key points:
+- Compute offerings are computed/queried only for **non-LOCAL providers** (e.g. RUNPOD).
+- Current “best” offering heuristic: **cheapest $/GB VRAM that can host the workload**.
+- Topology (PCIe/NVLink) is not yet accounted for. This can cause large slowdowns when
+  the workload is spread across GPUs without a strong interconnect.
+- FLOPs / perf metrics (TFLOPS/PFLOPS, memory bandwidth) are not yet included in the
+  “best” function; this will evolve.
+- Deployment constraints can be included in the selection context (e.g. SINGLE_DEVICE,
+  ENTERPRISE).
+- Users may explicitly select a GPU SKU for a provider which overrides the selection logic
+
+
+Selection function (current behavior summary):
+- For each requested model:
+  - Load HF config / model index
+  - Validate requested context length (max_model_len <= max_position_embeddings)
+  - Determine dtype / quant dtype → supported GPU architectures
+  - Estimate parameter VRAM (weights)
+  - Estimate KV cache VRAM (depends on concurrency, context length, layers, heads, dtype)
+- Combine across models to get total required VRAM.
+- For each offering:
+  - Match offering.id to an GPU “name”
+  - Apply constraints:
+    - ENTERPRISE constraint excludes non-enterprise offerings
+    - SINGLE_DEVICE excludes multi-GPU plans and finds a single GPU to fit your workload.
+    - max_available must satisfy required GPU count
+    - GPU architecture must be supported
+  - Compute number of GPUs needed based on required VRAM and per-GPU free memory
+  - Compute price = num_gpu * price_per_hour
+- Choose the cheapest candidate.
+
+
+Planned improvements (explicitly not implemented yet):
+- Topology-aware selection (NVLink vs PCIe, NUMA locality, interconnect bandwidth)
+- Perf-aware selection (TFLOPS, memory bandwidth, model-specific throughput)
+- Provider-side “hard” constraints (spot vs on-demand, regions, min uptime, etc.)
+- Explicit user GPU selection override per provider
+
+RUNPOD GPU SKUs (user-selectable identifiers)
+---------------------------------------------
+These are the known GPU names exposed for Runpod selection
+```python
+
+from conduit.compute_provider.runpod.runpod_types import GPUS
+```
+
+B200,
+RTX_3090,
+RTX_4090,
+A40,
+RTX_A5000,
+RTX_A4500,
+RTX_A6000,
+L40S,
+L4,
+H100_80GB_HBM3,
+RTX_4000_ADA,
+A100_80GB_PCIE,
+A100_SXM4_80GB,
+RTX_A4000,
+RTX_6000_ADA,
+RTX_2000_ADA,
+H200,
+L40,
+H100_NVL,
+H100_PCIE,
+RTX_3080_TI,
+RTX_3080,
+RTX_3070,
+V100_PCIE_16GB,
+MI300X_OAM,
+RTX_A2000,
+V100_FHHL_16GB,
+RTX_4080_SUPER,
+V100_SXM2_16GB,
+RTX_4070_TI,
+V100_SXM2_32GB,
+RTX_4000_SFF_ADA,
+RTX_5000_ADA,
+RTX_5090,
+A30,
+RTX_4080,
+RTX_5080,
+RTX_3090_TI
+
+E) Deployment Lifecycle
+-----------------------
+Conduit automatically manages:
+- compute offering selection
+- container + node provisioning
+- health checks and readiness
+- stop / restart / delete
+- garbage collection of unused deployments
+
+F) Model Configuration
+----------------------
+Configured via dataclasses:
+
+- LmModelConfig:
+  - id
+  - max_model_len = 1024
+  - max_model_concurrency = 1
+
+- LmLiteModelConfig(LmModelConfig):
+  - model_batch_execute_timeout_ms = 500
+
+================================================================================
+3) Types You Should Assume Exist
+================================================================================
+
+Enums:
+- DeploymentStatus: DEPLOYING, DEPLOYED, STOPPED
+- NodeStatus: PROVISIONING, PROVISIONED, DEPLOYED, STOPPED
+- Runtime: LM_LITE
+- ComputeProvider: LOCAL, RUNPOD
+- DeploymentType: LLM
+
+================================================================================
+4) How to Build Pipelines in Conduit
+================================================================================
+
+Pipelines are “just Python”.
+
+General pattern:
+1) Define dataclass schemas
+2) Instantiate blocks
+3) Pass dataclass instances through blocks
+4) LLM blocks return either text or typed output
+
+Core promise:
+Every step receives validated, well-defined data.
+
+================================================================================
+5) Built-In Blocks
+================================================================================
+
+Base class:
+- Block[I, O]
+  - __call__(data: I) -> O
+  - forward(data: I) -> O
+
+Utility blocks:
+- HttpGetBlock(NoOp → HttpOperation)
+- HttpPostBlock(InputDataclass → HttpOperation)
+- Sqlite3Block(Input with sql_command → SqlOperation)
+- PostgresBlock(Input with sql_command → SqlOperation)
+- FileSystemReadBlock(NoOp → FileSystemOperation)
+- FileSystemWriteBlock(Input with file_content → FileSystemOperation)
+- SystemCommandBlock(Input with shell_command → SystemCommandOperation)
+
+SystemCommandBlock behavior:
+- Validate syntax: <shell> -n -c "<cmd>"
+- Execute command: <shell> -c "<cmd>"
+
+Operation result dataclasses:
+- HttpOperation: success, status_code?, data?, reason?
+- SqlOperation: success, reason?
+- FileSystemOperation: success, error_code?, data?, reason?, path?
+- SystemCommandOperation:
+  success, command, return_code?, stdout?, stderr?, reason?, syntax_ok?
+
+Helper:
+- NoOp dataclass — used when a block takes no input
+
+Input protocols:
+- SupportsShellCommand: shell_command: str
+- SupportsSqlCommand:   sql_command: str
+- SupportsFileContent:  file_content: str
+
+================================================================================
+6) LLM Inference Block — LMLiteBlock
+================================================================================
+
+Responsibilities:
+- Automatic provisioning & lifecycle management
+- GPU VRAM validation and selection
+- Replica + round-robin routing
+- Typed structured output via MDL
+
+Calling modes:
+(A) Chat/text → returns string
+(B) Structured → returns output dataclass
+
+Lifecycle methods:
+- stop()
+- restart()
+- delete()
+- gc()
+
+Readiness:
+- health() updates node/deployment state
+- ready == True when all nodes report {"ready": true}
+
+================================================================================
+7) Pipeline Examples
+================================================================================
+
+Example A — Shell → Structured Files via LLM
+--------------------------------------------
+
+from dataclasses import dataclass
+from typing import List
+from conduit.blocks import SystemCommandBlock
+from conduit.runtime import LMLiteBlock
+from conduit.conduit_types import ComputeProvider, LmLiteModelConfig
+
+model_id = "Qwen/Qwen3-4B-Instruct-2507-FP8"
+
+@dataclass
+class Command:
+    shell_command: str
+
+@dataclass
+class DirectoryListing:
+    listing: str
+
+@dataclass
+class File:
+    name: str
+    bytes: int
+    date_modified: str
+
+@dataclass
+class Files:
+    files: List[File]
+
+command_block = SystemCommandBlock(Command, timeout_seconds=5)
+
+lm = LMLiteBlock(
+    models=[LmLiteModelConfig(model_id, max_model_len=5000)],
+    compute_provider=ComputeProvider.LOCAL,
+)
+
+cmd_op = command_block(Command(shell_command="ls -al"))
+if cmd_op.success and cmd_op.stdout:
+    listing = DirectoryListing(listing=cmd_op.stdout)
+    result = lm(model_id=model_id, input=listing, output=Files)
+    print(result)
+
+Example B — Quick Chat Completion
+---------------------------------
+
+from conduit.runtime import LMLiteBlock
+from conduit.conduit_types import ComputeProvider, LmLiteModelConfig
+
+model_id = "Qwen/Qwen3-4B-Instruct-2507-FP8"
+
+lm = LMLiteBlock(
+    models=[LmLiteModelConfig(model_id)],
+    compute_provider=ComputeProvider.LOCAL,
+)
+
+messages = [{"role": "user", "content": "Write a haiku about GPUs."}]
+text = lm(model_id=model_id, messages=messages)
+print(text)
+
+Example C — HTTP Fetch → Typed Summary
+--------------------------------------
+
+from dataclasses import dataclass
+from conduit.blocks import HttpGetBlock, NoOp
+from conduit.runtime import LMLiteBlock
+from conduit.conduit_types import ComputeProvider, LmLiteModelConfig
+
+@dataclass
+class Page:
+    url: str
+    html: str
+
+@dataclass
+class Summary:
+    title: str
+    bullets: list[str]
+
+get = HttpGetBlock("https://example.com")
+resp = get(NoOp())
+
+if resp.success and resp.data:
+    page = Page(url="https://example.com", html=resp.data)
+
+    lm = LMLiteBlock(
+        models=[LmLiteModelConfig("Qwen/Qwen3-4B-Instruct-2507-FP8")],
+        compute_provider=ComputeProvider.LOCAL,
+    )
+
+    out = lm(
+        model_id="Qwen/Qwen3-4B-Instruct-2507-FP8",
+        input=page,
+        output=Summary,
+        guidance="Extract a short title and 3–7 bullet takeaways.",
+    )
+    print(out)
+
+================================================================================
+8) Structured Output (MDL Expectations)
+================================================================================
+
+- MDL schema is derived from dataclass type hints
+- Supports primitives, List, Dict, Optional, Union, nested dataclasses
+- Disallows untyped Any and explicit None
+
+Flow:
+1) Build MDL system prompt
+2) Call OpenAI-compatible endpoint
+3) Parse JSON into output dataclass
+
+Guidance:
+- Prefer simple dataclasses
+- Avoid free-form dicts
+- Stable, descriptive field names
+
+================================================================================
+9) Deployment, Compute Selection, and State Management
+================================================================================
+
+Compute selection:
+- Non-LOCAL:
+  - scan offerings
+  - choose best price / GB VRAM
+  - validate headroom
+- LOCAL:
+  - detect NVIDIA GPUs
+  - validate VRAM + disk space
+
+On insufficient VRAM:
+- Detailed runtime error:
+  - required VRAM
+  - model VRAM
+  - available capacity
+  - headroom
+- Suggested actions:
+  - larger GPU
+  - add GPUs
+  - reduce context / batch
+  - quantize model
+
+State management:
+- Conduit persists deployment and node state using SQLAlchemy
+- Supported backends:
+  - SQLite (default)
+  - PostgreSQL
+
+Database configuration:
+- Environment variable:
+  CONDUIT_DB_URI
+
+Default:
+- sqlite:///conduit.db
+
+Conceptual setup:
+- engine = create_engine(DATABASE_URL, echo=False)
+- DATABASE_URL = os.getenv("CONDUIT_DB_URI", "sqlite:///conduit.db")
+
+This database stores:
+- deployment lifecycle state
+- node status
+- runtime metadata for recovery, restarts, and GC

@@ -6,22 +6,23 @@ from conduit.state.db import Node, get_session
 
 
 def create_node(
-    external_id: str,
+    *,
+    session: Session,
+    external_id: str | None,
     ip_address: str | None,
-    port_map: Dict[str, int] | None,
+    port_map: dict | None,
     deployment_id: uuid.UUID,
 ) -> Node:
-    with get_session() as s:
-        obj = Node(
-            port_map=port_map,
-            external_id=external_id,
-            ip_address=ip_address,
-            deployment_id=deployment_id,
-        )
-        s.add(obj)
-        s.commit()
-        s.refresh(obj)
-        return obj
+    node = Node(
+        external_id=external_id,
+        ip_address=ip_address,
+        port_map=port_map,
+        deployment_id=deployment_id,
+        status=NodeStatus.PROVISIONING,
+    )
+    session.add(node)
+    session.flush()
+    return node
 
 
 def update_node_info(
@@ -73,8 +74,9 @@ def get_node_by_external_id(external_id: str) -> Node | None:
 def get_ready_nodes_by_deployment(deployment_id: uuid.UUID) -> list[Node]:
     with get_session() as s:
         statement = (
-            select(Node).where(Node.deployment_id == deployment_id)
-            # .where(Node.status == DeploymentStatus.DEPLOYED)
+            select(Node)
+            .where(Node.deployment_id == deployment_id)
+            .where(Node.status == NodeStatus.DEPLOYED)
         )
         return list(s.exec(statement))
 
