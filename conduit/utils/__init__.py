@@ -2,8 +2,6 @@ from typing import Any, List, Tuple
 from enum import Enum
 from dataclasses import dataclass, is_dataclass, fields
 
-from conduit.compute_provider.runpod.runpod_types import RunpodGpuType
-
 
 @dataclass(frozen=True)  # TODO impl Topology
 class NodeTopology:
