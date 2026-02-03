@@ -409,8 +409,6 @@ class LmInferenceBlock(BaseRuntimeBlock):
         else:
             result = f"✅ Found {len(compute_offerings)} compute offerings"
 
-        print(result)
-
         nvidia_gpus = build_nvidia_gpus_from_compute_offering(compute_offerings)
 
         if not self.gpu:
@@ -439,7 +437,6 @@ class LmInferenceBlock(BaseRuntimeBlock):
             raise ValueError("GPU not listed in Provider GPU's")
 
         offerings = [o for o in compute_offerings if o.id == self.gpu]
-        print(offerings)
         nvidia_gpus = build_nvidia_gpus_from_compute_offering(offerings)
         result = calculate_best_compute_offering(
             compute_offerings, nvidia_gpus, self.models, self.constraints
