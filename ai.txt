@@ -217,6 +217,7 @@ Utility blocks:
 - FileSystemWriteBlock(Input with file_content → FileSystemOperation)
 - SystemCommandBlock(Input with shell_command → SystemCommandOperation)
 - FastAPIServerBlock(FastAPIServerConfig → FastAPIServerOperation)
+- OpenAICompatableRuntimeBlock(OpenAI-compatible runtime → str | output dataclass)
 
 Sqlite3Block behavior:
 - SQL is generated internally from `DbAction` (no arbitrary SQL accepted).
@@ -229,6 +230,27 @@ Sqlite3Block behavior:
 - SELECT returns rows + column names in `SqlOperation`:
   - rows: list[tuple[Any, ...]]
   - columns: list[str]
+
+OpenAICompatableRuntimeBlock behavior:
+- Wraps an OpenAI-compatible HTTP runtime (defaults: scheme=https, host=api.openai.com, port=443).
+- Requires an API key by default:
+  - checks `api_key_env` (default `OPENAI_API_KEY`) at init time when `require_api_key=True`.
+- Supports two call modes:
+
+  1) Raw chat mode (OpenAI-compatible messages):
+     - Call with `model_id` + `messages: List[OpenAIMessage]`
+     - Returns: `str` (raw response text)
+
+  2) Typed dataclass mode (structured IO):
+     - Call with `model_id` + `input=<any>` + `output=Type[TOut]` (and no `messages`)
+     - Builds a system prompt via `build_mdl_system_prompt(guidance, input, output)`
+     - Sends the serialized input as a user message
+     - Parses the JSON response into the output type via `parse_llm_json(...)`
+     - Returns: `TOut`
+
+- Validation rules:
+  - Provide either `messages` OR (`input` and `output`), but not a mixture.
+  - If only one of (`input`, `output`) is provided → raises ValueError.
 
 SystemCommandBlock behavior:
 - Validate syntax: <shell> -n -c "<cmd>"
