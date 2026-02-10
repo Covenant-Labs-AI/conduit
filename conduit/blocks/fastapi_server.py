@@ -1,5 +1,8 @@
 import io
 import requests
+import uvicorn
+import threading
+import time
 from dataclasses import dataclass, is_dataclass, asdict
 from pathlib import Path
 from typing import (
@@ -13,14 +16,10 @@ from typing import (
     runtime_checkable,
 )
 
-
-import threading
-import time
 from dataclasses import dataclass, is_dataclass, asdict, fields
 from typing import List, Literal, Type, Callable, Any, get_type_hints
 
 
-import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.responses import FileResponse, StreamingResponse, JSONResponse
@@ -209,12 +208,12 @@ class FastAPIServerBlock(Block[FastAPIServerConfig, FastAPIServerOperation]):
                                 f'attachment; filename="{res.filename}"'
                             )
 
-                            return StreamingResponse(
-                                io.BytesIO(res.content or b""),
-                                media_type=res.media_type,
-                                headers=headers,
-                                status_code=res.status_code,
-                            )
+                        return StreamingResponse(
+                            io.BytesIO(res.content or b""),
+                            media_type=res.media_type,
+                            headers=headers,
+                            status_code=res.status_code,
+                        )
 
                     if hasattr(res, "__await__"):
                         res = await res  # type: ignore[misc]

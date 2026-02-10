@@ -3,11 +3,6 @@ from enum import Enum
 from dataclasses import dataclass, is_dataclass, fields
 
 
-@dataclass(frozen=True)  # TODO impl Topology
-class NodeTopology:
-    pass
-
-
 @dataclass
 class ComputeOffering:
     id: str
@@ -16,7 +11,6 @@ class ComputeOffering:
     memory_gb: int
     notes: str
     enterprise_grade: bool  # Runs in certified T3/T4 data centers
-    topology: List[NodeTopology] | None = None
 
 
 def dataclass_to_dict(obj: Any) -> dict:

@@ -62,17 +62,19 @@ A **Runtime** is any system capable of loading and executing a model.
 - Conduit abstracts runtimes behind a unified interface, allowing runtime changes without code changes
 
 **Currently supported runtimes:**
-- **LmLite** *(experimental)*
+- **LmLite**
   - Conduit’s native LLM runtime
   - Supports multiple models loaded concurrently
   - Async batching support
   - Per-model concurrency limits
+  - Best for small models and rapid prototyping
 
-**Planned runtimes:**
-- **vLLM** *(coming next)*
+- **vLLM** 
   - High-throughput LLM inference
   - Optimized for large-scale, multi-request workloads
-- **TensorRT** *(planned)*
+
+
+- **TensorRT** *(planned comming next)*
   - NVIDIA-optimized inference runtime
   - CUDA-based execution
   - Best suited for production, fixed-shape inference workloads
@@ -254,8 +256,6 @@ if command_op.success:
 ```
 
 ## ✅ TODOs
-
-- [ ] Support **vLLM** as a runtime (e.g. `VllmBlock` alongside `LMLiteBlock`)
 - [ ] Expand supported compute providers:
   - [ ] **AWS** (EKS / ECS / EC2)
   - [ ] **GCP** (GKE / Vertex / Compute Engine)

@@ -19,28 +19,25 @@ def check_endpoint(
     - host="https://my-host.com:8000" → auto-detects everything
     """
 
-    # If host is already a full URL, extract components
     parsed = urlparse(host)
-    if parsed.scheme:  # user passed full URL like "https://1.2.3.4:8080"
+    if parsed.scheme:
         scheme = parsed.scheme
         host = parsed.hostname
-        port = parsed.port or port  # explicit port overrides
+        port = parsed.port or port
     elif ":" in host and host.count(":") == 1 and host.split(":")[1].isdigit():
-        # Handle "host:port" format (e.g., "1.2.3.4:8080")
         host, port = host.split(":")
         port = int(port)
 
     if port is None:
-        port = 80 if scheme == "http" else 443  # sensible defaults
+        port = 80 if scheme == "http" else 443
 
     url = f"{scheme}://{host}:{port}{path}"
 
     try:
         response = requests.get(url, timeout=2)
+
         if response.status_code == 200:
-            if "application/json" in response.headers.get("Content-Type", ""):
-                return response.json()
-            return response.text
+            return True
         return False
     except requests.exceptions.RequestException:
         return False
@@ -61,6 +58,7 @@ def inf_open_ai_compat(
     messages: List[OpenAIMessage],
     system_message: str | None = None,
     scheme: str = "http",
+    api_key: str | None = "default-placeholder",
 ) -> str:
     """
     Supports:
@@ -98,10 +96,9 @@ def inf_open_ai_compat(
 
     client = OpenAI(
         base_url=base_url,
-        api_key="lm-lite",  # Dummy key for lm-lite
+        api_key=api_key,
     )
 
-    # Final message list (system first, if given)
     final_messages = []
     if system_message:
         final_messages.append({"role": "system", "content": system_message})

@@ -3,6 +3,7 @@ import threading
 from abc import ABC, abstractmethod
 import asyncio
 import json
+from dataclasses import asdict
 from typing import List, Type, Any, overload, TypeVar
 from conduit.conduit_types import (
     LmLiteModelConfig,
@@ -11,6 +12,7 @@ from conduit.conduit_types import (
     Runtime,
     DeploymentType,
     DeploymentStatus,
+    VLLMModelConfig,
 )
 from conduit.utils import dataclass_to_dict, gib_to_bytes
 from conduit.utils.accelerators.nvidia import (
@@ -21,6 +23,8 @@ from conduit.utils.accelerators.nvidia import (
 )
 from conduit.utils.deployment import (
     DeploymentConstraint,
+    calculate_best_compute_offering_for_vllm,
+    can_local_nvidia_run_vllm_model_or_raise,
     compute_deployment_key,
     calculate_best_compute_offering,
     can_nvidia_gpus_host_models,
@@ -206,7 +210,8 @@ class BaseRuntimeBlock(ABC):
             result = healthcheck(node.ip_address, port)
             results[str(node.id)] = result
 
-            node_ready = isinstance(result, dict) and result.get("ready") is True
+            node_ready = result is not False
+
             update_node_status(
                 node.id, NodeStatus.DEPLOYED if node_ready else NodeStatus.PROVISIONING
             )
@@ -220,10 +225,7 @@ class BaseRuntimeBlock(ABC):
 
     @property
     def ready(self) -> bool:
-        return all(
-            isinstance(data, dict) and data.get("ready") is True
-            for data in self.health().values()
-        )
+        return all(self.health().values())
 
     async def _run_restart_async(self):
         deployment_nodes = get_nodes_by_deployment(self.deployment.id)
@@ -335,7 +337,7 @@ class LmInferenceBlock(BaseRuntimeBlock):
     def __init__(
         self,
         *,
-        models: List["LmLiteModelConfig"],
+        models: List[LmLiteModelConfig | VLLMModelConfig],
         compute_provider: ComputeProvider,
         gpu: str | None = None,
         constraints: List[DeploymentConstraint] = [],
@@ -383,6 +385,53 @@ class LmInferenceBlock(BaseRuntimeBlock):
 
     @abstractmethod
     def calculate_container_size_gb(self) -> int: ...
+
+    @abstractmethod
+    def calculate_model_vram(self) -> GPUHostingResult: ...
+
+    def _next_node_round_robin(self) -> Node:
+        nodes = get_ready_nodes_by_deployment(self.deployment.id)
+        if not nodes:
+            raise RuntimeError(f"No ready nodes for deployment {self.deployment.id}")
+
+        with self._rr_lock:
+            node = nodes[self._rr_index % len(nodes)]
+            self._rr_index += 1
+
+        return node
+
+
+class LMLiteBlock(LmInferenceBlock):
+    _runtime = Runtime.LM_LITE
+    _deployment_type = DeploymentType.LLM
+    _image = "covenantlab/lmlite"
+    _ports = "8000"
+
+    @property
+    def runtime(self) -> Runtime:
+        return self._runtime
+
+    @property
+    def deployment_type(self) -> DeploymentType:
+        return self._deployment_type
+
+    @property
+    def image(self) -> str:
+        return self._image
+
+    @property
+    def ports(self) -> str:
+        return self._ports
+
+    def build_env(self) -> EnvConfig:
+        return {
+            "env": {
+                "MODELS": json.dumps([model.__dict__ for model in self.models]),
+            }
+        }
+
+    def calculate_container_size_gb(self) -> int:
+        return calculate_container_size_gb(self.models, runtime_size_gb=3) * 2
 
     def calculate_model_vram(self) -> GPUHostingResult:
         self.deployment_hash = compute_deployment_key(self)
@@ -444,22 +493,72 @@ class LmInferenceBlock(BaseRuntimeBlock):
 
         return result
 
-    def _next_node_round_robin(self) -> Node:
-        nodes = get_ready_nodes_by_deployment(self.deployment.id)
-        if not nodes:
-            raise RuntimeError(f"No ready nodes for deployment {self.deployment.id}")
+    @overload
+    def __call__(
+        self,
+        model_id: str,
+        messages: List[OpenAIMessage],
+        guidance: str | None = None,
+        *,
+        output: None = ...,
+        input: None = ...,
+    ) -> str: ...
 
-        with self._rr_lock:
-            node = nodes[self._rr_index % len(nodes)]
-            self._rr_index += 1
+    @overload
+    def __call__(
+        self,
+        model_id: str,
+        messages: None = ...,
+        guidance: str | None = None,
+        *,
+        input: Any,
+        output: Type[Any],
+    ) -> Any: ...
 
-        return node
+    def __call__(
+        self,
+        model_id: str,
+        messages: List[OpenAIMessage] | None = None,
+        guidance: str | None = None,
+        *,
+        input: Any = None,
+        output: Type[Any] | None = None,
+    ) -> Any:
+        node = self._next_node_round_robin()
+        port = node.resolve_port(int(self.ports))
+
+        if messages and input is None and output is None:
+            return inf_open_ai_compat(
+                node.ip_address, port, model_id, messages, guidance
+            )
+
+        if (input is not None and output is not None) and not messages:
+            system_prompt = build_mdl_system_prompt(guidance or "", input, output)
+            data_input: List[OpenAIMessage] = [
+                {"role": "user", "content": str(dataclass_to_dict(input))}
+            ]
+            json_response = inf_open_ai_compat(
+                node.ip_address, port, model_id, data_input, system_prompt
+            )
+            return parse_llm_json(json_response, output)
+
+        if (input is not None) ^ (output is not None):
+            raise ValueError("Both `input` and `output` must be provided together.")
+
+        raise ValueError("Provide either `messages` or (`input`, `output`).")
 
 
-class LMLiteBlock(LmInferenceBlock):
-    _runtime = Runtime.LM_LITE
+class VLLMBlock(LmInferenceBlock):
+    """
+    BETA:
+      WARNING: IN TESTING MAY EXPERINCE OOM AND OTHER ODD BUGS PLEASE OPEN PR WITH TRACEBACK
+    """
+
+    _runtime = Runtime.VLLM
     _deployment_type = DeploymentType.LLM
-    _image = "covenantlab/lmlite"
+
+    _image = "covenantlab/vllm:latest"
+
     _ports = "8000"
 
     @property
@@ -479,14 +578,57 @@ class LMLiteBlock(LmInferenceBlock):
         return self._ports
 
     def build_env(self) -> EnvConfig:
-        return {
-            "env": {
-                "MODELS": json.dumps([model.__dict__ for model in self.models]),
-            }
-        }
+        vllm_cfg = asdict(self.models[0])
+
+        return {"env": {"VLLM_CONFIG": json.dumps(vllm_cfg)}}
 
     def calculate_container_size_gb(self) -> int:
-        return calculate_container_size_gb(self.models, runtime_size_gb=3) * 2
+        """
+        Keep same sizing style as LMLiteBlock by default.
+        You may want to bump runtime_size_gb if your vLLM image is larger.
+        """
+        return calculate_container_size_gb(self.models, runtime_size_gb=10) * 2
+
+    def calculate_model_vram(self) -> GPUHostingResult:
+        self.deployment_hash = compute_deployment_key(self)
+        if self.compute_provider == ComputeProvider.LOCAL:
+            nvidia_gpus = detect_nvidia()
+            if not nvidia_gpus:
+                raise RuntimeError("No NVIDIA GPU's detected")
+            return can_local_nvidia_run_vllm_model_or_raise(
+                nvidia_gpus, self.models, self.constraints
+            )
+
+        print(
+            f"🔎 Scanning {self.compute_provider} for "
+            f"{'available ' + self.gpu if self.gpu else 'available offerings'}..."
+        )
+
+        compute_offerings = get_provider_compute_offerings(self.compute_provider)
+
+        if self.gpu:
+            offerings = [o for o in compute_offerings if o.id == self.gpu]
+            compute_offerings = offerings
+
+        nvidia_gpus = build_nvidia_gpus_from_compute_offering(compute_offerings)
+
+        result = calculate_best_compute_offering_for_vllm(
+            compute_offerings, nvidia_gpus, self.models, self.constraints
+        )
+
+        print("🧮 Finished capacity calculations.")
+        print(
+            '"""""""""""""""""""""""""""""""""""""""""""""""""""\n'
+            f"  GPU: {result.gpus.name} x{result.gpus.gpu_count} ({result.gpus.memory_mib / 1024:.0f} GB)\n"
+            f"  Required VRAM (GB): {result.required_vram_gb:.2f}\n"
+            f"  Raw model VRAM (GB): {result.raw_model_vram_gb:.2f}\n"
+            f"  Total capacity (GB): {result.total_capacity_gb:.2f}\n"
+            f"  Headroom (GB): {result.headroom_gb:.2f}\n"
+            f"  Price: ${result.price_cents / 100}/hr\n"
+            '"""""""""""""""""""""""""""""""""""""""""""""""""""'
+        )
+
+        return result
 
     @overload
     def __call__(

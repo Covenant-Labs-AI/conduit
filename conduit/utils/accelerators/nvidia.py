@@ -2,7 +2,7 @@ import re
 import subprocess
 from dataclasses import dataclass
 from enum import Enum
-from typing import List, Dict, Sequence, Mapping
+from typing import List, Dict, Sequence, Mapping, Final
 from conduit.utils import ComputeOffering
 from conduit.utils.model import DType
 
@@ -20,6 +20,27 @@ class Architecture(Enum):
     UNKNOWN = "UNKNOWN"
 
 
+class GpuInterconnectKind(str, Enum):
+    NONE = "none"
+    NVLINK_PAIR = "nvlink_pair"
+    NVSWITCH_FABRIC = "nvswitch_fabric"
+
+
+@dataclass(frozen=True)
+class InterconnectCapability:
+    kind: GpuInterconnectKind
+    max_domain_gpus: int
+    notes: str | None = None
+
+
+@dataclass(frozen=True)
+class InterconnectRule:
+    kind: GpuInterconnectKind
+    max_domain_gpus: int
+    pattern: re.Pattern[str]
+    notes: str | None = None
+
+
 @dataclass
 class NvidiaGPU:
     name: str
@@ -27,6 +48,7 @@ class NvidiaGPU:
     memory_mib: int  # Total VRAM (MiB, binary)
     memory_used_mib: int  # Used VRAM (MiB, binary)
     memory_free_mib: int  # Free VRAM (MiB, binary)
+    interconnect: InterconnectCapability
     architecture: Architecture
 
 
@@ -201,6 +223,129 @@ DTYPE_TO_NVIDIA_ARCHITECTURES = {
 }
 
 
+# --- Strong platform/topology signals ---
+FABRIC_PLATFORM_RE: Final[re.Pattern[str]] = re.compile(
+    r"\b(HGX|DGX|NV\s*Switch|NVSwitch|SXM\d?|OAM)\b", re.IGNORECASE
+)
+
+PAIR_TOPOLOGY_RE: Final[re.Pattern[str]] = re.compile(
+    r"\bNVL\b|\bNV\s*Link\b|\bBridge\b|\b2[-\s]*GPU\b|\bdual\b.*\bgpu\b",
+    re.IGNORECASE,
+)
+
+# --- GPU model capability packs (fallback when providers don't label topology) ---
+
+# “Usually capable of being deployed in NVSwitch fabrics” (when in HGX/DGX/SXM/OAM platforms)
+# NOTE: This does NOT mean every listing is NVSwitch; this is used in the *greedy* fallback with gpu_count/platform hints.
+DATACENTER_FABRIC_CAPABLE_GPU_RE: Final[re.Pattern[str]] = re.compile(
+    r"\b(" r"H100|H200|B200|A100|V100" r")\b",
+    re.IGNORECASE,
+)
+
+# “Often supports 2-GPU high-bandwidth links” (bridge / paired boards / NVL SKUs)
+# NOTE: still platform-dependent;
+PAIR_CAPABLE_GPU_RE: Final[re.Pattern[str]] = re.compile(
+    r"\b("
+    r"(RTX\s*)?3090\b|"
+    r"H100\s*NVL\b|"
+    r"(RTX\s*)?A(4500|5000|6000)\b|"
+    r"\bA30\b|"
+    r"\bA40\b|"
+    r"\b(A100|H100|V100)\b.*\bPCIe\b|"
+    r"\bV100-PCIE\b"
+    r")",
+    re.IGNORECASE,
+)
+
+# Explicitly “no NVLink” buckets (keep these late, but still before default)
+NO_NVLINK_GPU_RE: Final[re.Pattern[str]] = re.compile(
+    r"\b("
+    r"L4\b|L40S?\b|"
+    r"RTX\s+4000(\s+SFF\s+)?Ada(\s+Generation)?\b|"
+    r"RTX\s+5000\s+Ada(\s+Generation)?\b|"
+    r"RTX\s+6000\s+Ada(\s+Generation)?\b|"
+    r"RTX\s+2000\s+Ada(\s+Generation)?\b|"
+    r"RTX\s*A(2000|4000)\b|"
+    r"(RTX\s*)?(40\d{2}|50\d{2})\b|"
+    r"\b3080(\s*Ti)?\b|\b3070\b|"
+    r"3090\s*Ti\b"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+# --- First-match-wins explicit rules (strong signals) ---
+INTERCONNECT_RULES: Final[list[InterconnectRule]] = [
+    InterconnectRule(
+        kind=GpuInterconnectKind.NVSWITCH_FABRIC,
+        max_domain_gpus=8,
+        pattern=FABRIC_PLATFORM_RE,
+        notes="Platform indicates NVSwitch-class fabric (HGX/DGX/SXM/OAM/NVSwitch)",
+    ),
+    InterconnectRule(
+        kind=GpuInterconnectKind.NVLINK_PAIR,
+        max_domain_gpus=2,
+        pattern=PAIR_TOPOLOGY_RE,
+        notes="Explicit NVLink/NVL/bridge/dual-GPU pairing signal",
+    ),
+]
+
+DEFAULT_INTERCONNECT: Final[InterconnectCapability] = InterconnectCapability(
+    kind=GpuInterconnectKind.NONE,
+    max_domain_gpus=1,
+    notes="Default: assume PCIe-only",
+)
+
+
+def infer_interconnect(id: str) -> InterconnectCapability:
+    """
+    First-match-wins regex inference using ONLY the GPU id string.
+
+    Inference order:
+      1) Strong explicit platform/topology regexes (first-match-wins)
+      2) Explicit "no NVLink" GPU buckets
+      3) Greedy GPU capability fallback (based on model/SKU only)
+      4) Default NONE
+    """
+    s = id.strip()
+
+    for rule in INTERCONNECT_RULES:
+        if rule.pattern.search(s):
+            return InterconnectCapability(rule.kind, rule.max_domain_gpus, rule.notes)
+
+    if NO_NVLINK_GPU_RE.search(s):
+        return InterconnectCapability(
+            kind=GpuInterconnectKind.NONE,
+            max_domain_gpus=1,
+            notes="GPU family generally does not support NVLink/NVSwitch",
+        )
+
+    if re.search(r"\bSXM\b|\bSXM\d\b|\bSXM2\b|\bSXM4\b", s, re.IGNORECASE):
+        return InterconnectCapability(
+            kind=GpuInterconnectKind.NVSWITCH_FABRIC,
+            max_domain_gpus=8,
+            notes="SXM-style SKU implies NVSwitch-class fabric capability",
+        )
+
+    if DATACENTER_FABRIC_CAPABLE_GPU_RE.search(s):
+        return InterconnectCapability(
+            kind=GpuInterconnectKind.NVSWITCH_FABRIC,
+            max_domain_gpus=8,
+            notes="datacenter GPU assumed NVSwitch fabric when no other info is available",
+        )
+
+    # 3b) If it's a known NVLink pair-capable SKU, assume 2-GPU NVLink domain.
+    if PAIR_CAPABLE_GPU_RE.search(s):
+        return InterconnectCapability(
+            kind=GpuInterconnectKind.NVLINK_PAIR,
+            max_domain_gpus=2,
+            notes="NVLink-capable SKU assumed to be deployed as a 2-GPU NVLink pair",
+        )
+
+    # 4) Default
+    return DEFAULT_INTERCONNECT
+
+
 def architectures_for_dtype(dtype: DType):
     try:
         return DTYPE_TO_NVIDIA_ARCHITECTURES[dtype]
@@ -255,6 +400,7 @@ def detect_nvidia() -> NvidiaGPU | None:
     return NvidiaGPU(
         name=name,
         gpu_count=gpu_count,
+        interconnect=infer_interconnect(name),
         memory_mib=gpu_count * total_mib,
         memory_used_mib=used_mib,
         memory_free_mib=free_mib,
@@ -285,6 +431,7 @@ def build_nvidia_gpus(
                 memory_mib=total_mib,
                 memory_used_mib=0,
                 memory_free_mib=total_mib,
+                interconnect=infer_interconnect(name),
                 architecture=guess_architecture_regex(name),
             )
         )
@@ -318,6 +465,7 @@ def build_nvidia_gpus_from_compute_offering(
                 memory_mib=total_mib,
                 memory_used_mib=0,
                 memory_free_mib=total_mib,
+                interconnect=infer_interconnect(offering.id),
                 architecture=guess_architecture_regex(offering.id),
             )
         )

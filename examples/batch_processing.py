@@ -56,6 +56,7 @@ def test_batch_processing_with_mdl(
             )
         ],
         compute_provider=ComputeProvider.RUNPOD,  # choose compute provider (only RUNPOD atm)
+        compute_provider_config_overrides={"countryCodes": ["US"]},
         # choose a specific GPU OR by default Conduit will optimize for VRAM efficiency
         # on smallest possible GPU for your model(s) requirements
         gpu=GPUS.L4,

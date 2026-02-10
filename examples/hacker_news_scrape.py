@@ -7,7 +7,7 @@ from pathlib import Path
 from conduit.compute_provider.local import LocalNetworkBinding
 from conduit.runtime import LMLiteBlock
 from conduit import LmLiteModelConfig, ComputeProvider
-from conduit.blocks import FileSystemWriteBlock, HttpGetBlock, Sqlite3Block
+from conduit.blocks import FileSystemWriteBlock, HttpGetBlock, Sqlite3Block, DbAction
 from conduit.utils.deployment import DeploymentConstraint
 from conduit.compute_provider.runpod.runpod_types import GPUS
 
@@ -29,16 +29,9 @@ from conduit.compute_provider.runpod.runpod_types import GPUS
 #      (title / points / link), producing structured data from raw HTML.
 #   4) If a schema file doesn’t exist, asks the model to generate a SQLite schema
 #      for an `articles` table and writes it to disk (schema.sql).
-#   5) Uses the model again to transform the structured article list into a SQL
-#      INSERT statement, then executes it with Sqlite3Block into hackernews.db.
-#
-# Notes / gotchas:
-#   - This intentionally demonstrates cloud placement controls; unlike LOCAL,
-#     Runpod deployments can be filtered via DeploymentConstraint and may be
-#     hardware-selected by the provider/scheduler.
-#   - The SQL generation in this snippet is NOT parameterized / escaped; it’s a
-#     demo and can break (or be unsafe) if inputs contain quotes or weird chars.
-#     Prefer parameterized inserts or strict validation in real usage.
+#   5) Uses the model again to transform the structured article list into a safe,
+#      structured DbAction (no raw SQL), then executes it with Sqlite3Block into
+#      hackernews.db.
 # -----------------------------------------------------------------------------
 
 
@@ -63,31 +56,11 @@ def test_hacker_news_scrape(model: str = "Qwen/Qwen3-4B-Instruct-2507") -> None:
         ],
         # Compute provider (where the deployment runs)
         compute_provider=ComputeProvider.RUNPOD,
-        # --- Runpod cloud selection quirk ---
-        # Runpod has multiple cloud pools (e.g., ENTERPRISE/secure vs COMMUNITY).
-        #
-        # - constraints=[DeploymentConstraint.ENTERPRISE] filters placement to enterprise-eligible capacity.
-        # - Switching to COMMUNITY on Runpod requires a provider override:
-        #     compute_provider_config_overrides={"cloudType": "COMMUNITY"}
-        #   And you must REMOVE the ENTERPRISE constraint, otherwise you’ll filter out community capacity.
-        #
-        # Example (community):
-        #   constraints=[]
-        #   compute_provider_config_overrides={"cloudType": "COMMUNITY"}
-        #
-        # compute_provider_config_overrides={"cloudType": "COMMUNITY"},  # Runpod-only
         # Placement / compliance constraints (scheduler-side filtering)
         constraints=[
             DeploymentConstraint.ENTERPRISE,
             DeploymentConstraint.SINGLE_DEVICE,
         ],  # SOC2 compliant T3/T4 datacenters only
-        # --- Hardware selection (when applicable) ---
-        # Rule: If compute_provider is LOCAL, `num_gpus` and `gpu` do nothing (ignored).
-        # For non-local providers, hardware is either auto-selected by Conduit or controlled via
-        # provider-specific mechanisms (not via LOCAL-style pinning).
-        #
-        # num_gpus=2,
-        # gpu=GPUS.L4,
         # Replica count (LMLite does round-robin load balancing across replicas)
         replicas=1,
     )
@@ -110,9 +83,10 @@ def test_hacker_news_scrape(model: str = "Qwen/Qwen3-4B-Instruct-2507") -> None:
     class SchemaWriteOperation:
         file_content: str
 
+    # NEW: safe structured DB action wrapper for the new Sqlite3Block API
     @dataclass
-    class SqlLiteArticleListTableInsert:
-        sql_command: str
+    class SqliteArticleDbAction:
+        db_action: DbAction
 
     @dataclass
     class HackernewsArticleList:
@@ -148,9 +122,12 @@ def test_hacker_news_scrape(model: str = "Qwen/Qwen3-4B-Instruct-2507") -> None:
                         f"failed to write schema file: {write_res.reason}"
                     )
 
+            # NEW: Sqlite3Block now loads schema.sql and only accepts structured DbAction
             database_block = Sqlite3Block(
-                input=SqlLiteArticleListTableInsert,
+                input=SqliteArticleDbAction,
                 database_url="hackernews.db",
+                schema_file="schema.sql",
+                allowed_tables={"articles"},
             )
 
             hacker_news_data = hacker_news_get_block()
@@ -165,18 +142,26 @@ def test_hacker_news_scrape(model: str = "Qwen/Qwen3-4B-Instruct-2507") -> None:
                         input=RawHackerNewsHtml(raw=raw),
                         output=HackernewsArticleList,
                     )
-                    # Output type from previous call is the input to the next call.
-                    transform_list_into_insert_command = lm_lite_block(
+
+                    # IMPORTANT: When generating db ops with LLMS there's no no standard yet for output types
+                    # out must corherse list of lists as the inert many type. Not ideal but in future will be updated.
+                    transform_list_into_db_action = lm_lite_block(
                         model_id=model,
                         input=extract_articles_into_list,
-                        output=SqlLiteArticleListTableInsert,
+                        output=SqliteArticleDbAction,
+                        guidance=(
+                            "Create a DbAction that inserts these articles into the SQLite table "
+                            "'articles'. Use op='insert_many' with columns ['title','points','link'] "
+                            "and rows rows are a list of lists as the article values in the same order."
+                        ),
                     )
-                    # Execute the SQL command with the database block
-                    db_insert = database_block(transform_list_into_insert_command)
+
+                    # Execute the DB action with the database block
+                    db_insert = database_block(transform_list_into_db_action)
                     if db_insert.success:
                         print(
-                            f"successfully saved: "
-                            f"{transform_list_into_insert_command.sql_command}"
+                            f"successfully saved: rowcount={db_insert.rowcount} "
+                            f"lastrowid={db_insert.lastrowid}"
                         )
                     else:
                         raise RuntimeError(f"DB Insert failed: {db_insert.reason}")

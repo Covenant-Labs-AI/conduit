@@ -4,7 +4,7 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.poetry]
 name = "conduit"
-version = "0.0.2"
+version = "0.0.3"
 description = "Typesafe Agent Framework"
 readme = "README.md"
 license = "MIT"
@@ -14,8 +14,8 @@ authors = ["Tyler Hanson <tylerhanson921@gmail.com>"]
 python = ">=3.12.6,<4.0"
 requests = ">=2.31.0"
 
-transformers = "4.57.3"               # or ">=4.57.3,<5.0.0" if you like
-huggingface-hub = ">=0.34.0,<1.0.0"   # ✅ correct name + compatible range
+transformers = "4.57.3"
+huggingface-hub = ">=0.34.0,<1.0.0"
 
 cryptography = ">=42.0.0"
 tqdm = ">=4.0.0"

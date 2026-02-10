@@ -22,15 +22,18 @@ from .http import (
     HttpPostBlock,
 )
 from .sqlite import (
-    SupportsSqlCommand,
+    SupportsDbAction,
     SqlOperation,
     Sqlite3Block,
+    DbAction,
 )
 from .system import (
     SupportsShellCommand,
     SystemCommandOperation,
     SystemCommandBlock,
 )
+
+from .open_ai import OpenAICompatableRuntimeBlock
 
 
 __all__ = [
@@ -51,10 +54,12 @@ __all__ = [
     "HttpOperation",
     "HttpGetBlock",
     "HttpPostBlock",
-    "SupportsSqlCommand",
     "SqlOperation",
+    "SupportsDbAction",
     "Sqlite3Block",
+    "DbAction",
     "SupportsShellCommand",
     "SystemCommandOperation",
     "SystemCommandBlock",
+    "OpenAICompatableRuntimeBlock",
 ]
