@@ -1,19 +1,23 @@
 from dataclasses import dataclass
-from conduit.compute_provider.runpod.runpod_types import GPUS
-from conduit.runtime import VLLMBlock
 
+from conduit.compute_provider.runpod.runpod_types import GPUS
 from conduit.conduit_types import ComputeProvider, VLLMModelConfig
+from conduit.runtime import VLLMBlock
 from conduit.utils.deployment import DeploymentConstraint
 
 vllm_block = VLLMBlock(
-    models=[VLLMModelConfig(id="Qwen/Qwen3-4B-Instruct-2507-FP8", max_model_len=1024)],
+    models=[
+        VLLMModelConfig(
+            id="Qwen/Qwen3-235B-A22B-Instruct-2507-FP8", max_model_len=200_000
+        )
+    ],
     compute_provider=ComputeProvider.RUNPOD,
     compute_provider_config_overrides={"countryCodes": ["US"]},
     constraints=[
         DeploymentConstraint.ENTERPRISE,
         DeploymentConstraint.HIGH_BANDWIDTH_INTERCONNECT,
     ],
-    gpu=GPUS.L40,
+    gpu=GPUS.H100_PCIE,
 )
 PROMPT = """
 Felis catus is your taxonomic nomenclature,

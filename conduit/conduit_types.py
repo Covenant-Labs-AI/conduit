@@ -1,9 +1,9 @@
+from collections import defaultdict
 from dataclasses import dataclass, field
-from pathlib import Path
 from datetime import datetime
 from enum import Enum
-from typing import Any
-from collections import defaultdict
+from pathlib import Path
+from typing import Any, Literal
 
 
 class DeploymentStatus(Enum):
@@ -39,6 +39,7 @@ class LmModelConfig:
     id: str
     max_model_len: int = 1024
     max_model_concurrency: int = 1
+    task: Literal["generate", "embed", "rerank"] = "generate"
 
 
 @dataclass
@@ -111,3 +112,9 @@ class VLLMModelConfig:
             raise ValueError("Parallel sizes must be >= 1.")
         if not (0.0 < self.gpu_memory_utilization <= 1.0):
             raise ValueError("gpu_memory_utilization must be in (0, 1].")
+
+
+@dataclass
+class LLMRawTrace:
+    raw_input: str
+    raw_output: str

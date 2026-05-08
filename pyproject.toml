@@ -4,7 +4,7 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.poetry]
 name = "conduit"
-version = "0.0.3"
+version = "0.0.4"
 description = "Typesafe Agent Framework"
 readme = "README.md"
 license = "MIT"

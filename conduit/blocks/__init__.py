@@ -1,40 +1,35 @@
-from .block_types import I, O, Block, NoOp
-
+from .block_types import Block, I, NoOp, O
 from .fastapi_server import (
+    FastAPIServerBlock,
+    FastAPIServerConfig,
+    FastAPIServerOperation,
     HttpMethod,
     SupportsFileResponse,
     TypedRouteSpec,
-    FastAPIServerConfig,
-    FastAPIServerOperation,
-    FastAPIServerBlock,
 )
 from .filesystem import (
-    SupportsFileContent,
     FileSystemOperation,
     FileSystemReadBlock,
     FileSystemWriteBlock,
+    SupportsFileContent,
 )
-
-
 from .http import (
-    HttpOperation,
     HttpGetBlock,
+    HttpOperation,
     HttpPostBlock,
 )
+from .open_ai import OpenAICompatibleRuntimeBlock
 from .sqlite import (
-    SupportsDbAction,
-    SqlOperation,
-    Sqlite3Block,
     DbAction,
+    Sqlite3Block,
+    SqlOperation,
+    SupportsDbAction,
 )
 from .system import (
     SupportsShellCommand,
-    SystemCommandOperation,
     SystemCommandBlock,
+    SystemCommandOperation,
 )
-
-from .open_ai import OpenAICompatableRuntimeBlock
-
 
 __all__ = [
     "I",
@@ -61,5 +56,5 @@ __all__ = [
     "SupportsShellCommand",
     "SystemCommandOperation",
     "SystemCommandBlock",
-    "OpenAICompatableRuntimeBlock",
+    "OpenAICompatibleRuntimeBlock",
 ]

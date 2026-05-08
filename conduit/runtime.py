@@ -1,64 +1,75 @@
+import asyncio
+import json
 import os
 import threading
 from abc import ABC, abstractmethod
-import asyncio
-import json
 from dataclasses import asdict
-from typing import List, Type, Any, overload, TypeVar
-from conduit.conduit_types import (
-    LmLiteModelConfig,
-    ComputeProvider,
-    NodeStatus,
-    Runtime,
-    DeploymentType,
-    DeploymentStatus,
-    VLLMModelConfig,
-)
-from conduit.utils import dataclass_to_dict, gib_to_bytes
-from conduit.utils.accelerators.nvidia import (
-    GPUHostingResult,
-    NvidiaGPU,
-    build_nvidia_gpus_from_compute_offering,
-    detect_nvidia,
-)
-from conduit.utils.deployment import (
-    DeploymentConstraint,
-    calculate_best_compute_offering_for_vllm,
-    can_local_nvidia_run_vllm_model_or_raise,
-    compute_deployment_key,
-    calculate_best_compute_offering,
-    can_nvidia_gpus_host_models,
-    calculate_container_size_gb,
-    gpu_id_and_count_label,
-    has_enough_disk_space,
-    parse_llm_json,
-)
-from conduit.state.deployment import (
-    get_deployment,
-    create_deployment,
-    delete_deployment_by_key,
-    list_deployments,
-    update_deployment_status,
-)
-from conduit.state.node import (
-    get_nodes_by_deployment,
-    get_ready_nodes_by_deployment,
-    update_node_status,
-    create_node,
-)
-from conduit.state.db import Node, get_session
+
+from typing import Any, Callable, List, Type, TypeVar, overload, Literal
+
 from conduit.compute_provider import (
     EnvConfig,
+    deprovision,
     get_provider_compute_offerings,
     restart_provider_node,
     start_container_provision,
     stop_provider_node,
     wait_node_provision,
-    deprovision,
 )
-from conduit.conduit_http import healthcheck, OpenAIMessage, inf_open_ai_compat
+from conduit.conduit_http import (
+    EmbeddingItem,
+    EmbeddingResponse,
+    OpenAIMessage,
+    RerankResponse,
+    RerankResult,
+    healthcheck,
+    inf_embedding,
+    inf_open_ai_compat,
+    inf_rerank,
+)
+from conduit.conduit_types import (
+    ComputeProvider,
+    DeploymentStatus,
+    DeploymentType,
+    LLMRawTrace,
+    LmLiteModelConfig,
+    NodeStatus,
+    Runtime,
+    VLLMModelConfig,
+)
 from conduit.mdl import build_mdl_system_prompt
-
+from conduit.state.db import Node, get_session
+from conduit.state.deployment import (
+    create_deployment,
+    delete_deployment_by_key,
+    get_deployment,
+    list_deployments,
+    update_deployment_status,
+)
+from conduit.state.node import (
+    create_node,
+    get_nodes_by_deployment,
+    get_ready_nodes_by_deployment,
+    update_node_status,
+)
+from conduit.utils import dataclass_to_dict, gib_to_bytes
+from conduit.utils.accelerators.nvidia import (
+    GPUHostingResult,
+    build_nvidia_gpus_from_compute_offering,
+    detect_nvidia,
+)
+from conduit.utils.deployment import (
+    DeploymentConstraint,
+    calculate_best_compute_offering,
+    calculate_best_compute_offering_for_vllm,
+    calculate_container_size_gb,
+    can_local_nvidia_run_vllm_model_or_raise,
+    can_nvidia_gpus_host_models,
+    compute_deployment_key,
+    gpu_id_and_count_label,
+    has_enough_disk_space,
+    parse_llm_json,
+)
 
 TIn = TypeVar("TIn")
 TOut = TypeVar("TOut")
@@ -404,7 +415,7 @@ class LmInferenceBlock(BaseRuntimeBlock):
 class LMLiteBlock(LmInferenceBlock):
     _runtime = Runtime.LM_LITE
     _deployment_type = DeploymentType.LLM
-    _image = "covenantlab/lmlite"
+    _image = "covenantlab/lmlitetest-embed-rerrank"
     _ports = "8000"
 
     @property
@@ -432,6 +443,97 @@ class LMLiteBlock(LmInferenceBlock):
 
     def calculate_container_size_gb(self) -> int:
         return calculate_container_size_gb(self.models, runtime_size_gb=3) * 2
+
+    def _get_model_config(self, model_id: str) -> LmLiteModelConfig:
+        for model in self.models:
+            print(model, model_id)
+            if model.id == model_id:
+                return model
+        raise ValueError(f"Unknown model_id: {model_id}")
+
+    def embed(
+        self,
+        model_id: str,
+        input: str | list[str],
+        *,
+        dimensions: int | None = None,
+        encoding_format: Literal["float", "base64"] = "float",
+    ) -> EmbeddingResponse:
+        model_cfg = self._get_model_config(model_id)
+        if model_cfg.task != "embed":
+            raise ValueError(
+                f"Model '{model_id}' has task='{model_cfg.task}', expected 'embed'"
+            )
+
+        node = self._next_node_round_robin()
+        port = node.resolve_port(int(self.ports))
+        response = inf_embedding(
+            node.ip_address,
+            port,
+            model_id,
+            input,
+            dimensions=dimensions,
+            encoding_format=encoding_format,
+        )
+
+        items = [
+            EmbeddingItem(
+                index=item["index"],
+                embedding=item["embedding"],
+            )
+            for item in response["data"]
+        ]
+
+        usage = response.get("usage", {})
+        return EmbeddingResponse(
+            model=response["model"],
+            data=items,
+            prompt_tokens=usage.get("prompt_tokens", 0),
+            total_tokens=usage.get("total_tokens", 0),
+        )
+
+    def rerank(
+        self,
+        model_id: str,
+        query: str,
+        documents: list[str],
+        *,
+        top_n: int | None = None,
+        return_documents: bool = False,
+    ) -> RerankResponse:
+        model_cfg = self._get_model_config(model_id)
+        if model_cfg.task != "rerank":
+            raise ValueError(
+                f"Model '{model_id}' has task='{model_cfg.task}', expected 'rerank'"
+            )
+
+        node = self._next_node_round_robin()
+        port = node.resolve_port(int(self.ports))
+        response = inf_rerank(
+            node.ip_address,
+            port,
+            model_id,
+            query,
+            documents,
+            top_n=top_n,
+            return_documents=return_documents,
+        )
+        results = [
+            RerankResult(
+                index=item["index"],
+                relevance_score=item["relevance_score"],
+                document=item.get("document"),
+            )
+            for item in response["results"]
+        ]
+        usage = response.get("usage", {})
+        return RerankResponse(
+            id=response["id"],
+            model=response["model"],
+            results=results,
+            prompt_tokens=usage.get("prompt_tokens", 0),
+            total_tokens=usage.get("total_tokens", 0),
+        )
 
     def calculate_model_vram(self) -> GPUHostingResult:
         self.deployment_hash = compute_deployment_key(self)
@@ -524,6 +626,13 @@ class LMLiteBlock(LmInferenceBlock):
         input: Any = None,
         output: Type[Any] | None = None,
     ) -> Any:
+        model_cfg = self._get_model_config(model_id)
+        if model_cfg.task != "generate":
+            raise ValueError(
+                f"__call__ only supports task='generate'. "
+                f"Model '{model_id}' has task='{model_cfg.task}'. "
+                "Use .embed(...) or .rerank(...) instead."
+            )
         node = self._next_node_round_robin()
         port = node.resolve_port(int(self.ports))
 
@@ -639,6 +748,7 @@ class VLLMBlock(LmInferenceBlock):
         *,
         output: None = ...,
         input: None = ...,
+        raw_trace_hook: Callable[[LLMRawTrace], None] | None = None,
     ) -> str: ...
 
     @overload
@@ -650,6 +760,7 @@ class VLLMBlock(LmInferenceBlock):
         *,
         input: Any,
         output: Type[Any],
+        raw_trace_hook: Callable[[LLMRawTrace], None] | None = None,
     ) -> Any: ...
 
     def __call__(
@@ -660,24 +771,57 @@ class VLLMBlock(LmInferenceBlock):
         *,
         input: Any = None,
         output: Type[Any] | None = None,
+        raw_trace_hook: Callable[[LLMRawTrace], None] | None = None,
     ) -> Any:
         node = self._next_node_round_robin()
         port = node.resolve_port(int(self.ports))
 
         if messages and input is None and output is None:
-            return inf_open_ai_compat(
-                node.ip_address, port, model_id, messages, guidance
+            raw_input = str(messages)
+
+            raw_output = inf_open_ai_compat(
+                node.ip_address,
+                port,
+                model_id,
+                messages,
+                guidance,
             )
+
+            if raw_trace_hook is not None:
+                raw_trace_hook(
+                    LLMRawTrace(
+                        raw_input=raw_input,
+                        raw_output=raw_output,
+                    )
+                )
+
+            return raw_output
 
         if (input is not None and output is not None) and not messages:
             system_prompt = build_mdl_system_prompt(guidance or "", input, output)
             data_input: List[OpenAIMessage] = [
                 {"role": "user", "content": str(dataclass_to_dict(input))}
             ]
-            json_response = inf_open_ai_compat(
-                node.ip_address, port, model_id, data_input, system_prompt
+
+            raw_input = f"SYSTEM:\n{system_prompt}\n\nMESSAGES:\n{data_input}"
+
+            raw_output = inf_open_ai_compat(
+                node.ip_address,
+                port,
+                model_id,
+                data_input,
+                system_prompt,
             )
-            return parse_llm_json(json_response, output)
+
+            if raw_trace_hook is not None:
+                raw_trace_hook(
+                    LLMRawTrace(
+                        raw_input=raw_input,
+                        raw_output=raw_output,
+                    )
+                )
+
+            return parse_llm_json(raw_output, output)
 
         if (input is not None) ^ (output is not None):
             raise ValueError("Both `input` and `output` must be provided together.")

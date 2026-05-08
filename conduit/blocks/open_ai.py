@@ -1,17 +1,21 @@
 import os
-from typing import List, Type, Any, overload, TypeVar
+from typing import Any, Callable, List, Type, TypeVar, cast, overload
 
-from .block_types import Block
+from conduit.conduit_types import LLMRawTrace
+from openai import APIError, BadRequestError, NotFoundError, OpenAI
+
 from conduit.conduit_http import OpenAIMessage, inf_open_ai_compat
 from conduit.mdl import build_mdl_system_prompt
 from conduit.utils import dataclass_to_dict
 from conduit.utils.deployment.vram import parse_llm_json
 
+from .block_types import Block
+
 TIn = TypeVar("TIn")
 TOut = TypeVar("TOut")
 
 
-class OpenAICompatableRuntimeBlock(Block[TIn, TOut]):
+class OpenAICompatibleRuntimeBlock(Block[TIn, TOut]):
     def __init__(
         self,
         *,
@@ -20,15 +24,23 @@ class OpenAICompatableRuntimeBlock(Block[TIn, TOut]):
         scheme: str = "https",
         api_key_env: str = "OPENAI_API_KEY",
         require_api_key: bool = True,
+        api_mode: str = "auto",  # "auto" | "responses" | "chat_completions"
     ) -> None:
         if require_api_key and not os.getenv(api_key_env):
             raise RuntimeError(
                 f"Missing API key: set {api_key_env} in the environment."
             )
+
+        if api_mode not in {"auto", "responses", "chat_completions"}:
+            raise ValueError(
+                "api_mode must be one of: 'auto', 'responses', 'chat_completions'"
+            )
+
         self.api_key_env = api_key_env
         self.host = host
         self.port = port
         self.scheme = scheme
+        self.api_mode = api_mode
 
     @overload
     def __call__(
@@ -60,29 +72,66 @@ class OpenAICompatableRuntimeBlock(Block[TIn, TOut]):
         *,
         input: Any = None,
         output: Type[TOut] | None = None,
+        raw_trace_hook: Callable[[LLMRawTrace], None] | None = None,
     ) -> Any:
         if messages and input is None and output is None:
-            return inf_open_ai_compat(
-                self.host, self.port, model_id, messages, guidance, scheme=self.scheme
+            raw_input = str(messages)
+
+            raw_output = inf_open_ai_compat(
+                self.host,
+                self.port,
+                model_id,
+                messages,
+                system_message=guidance,
+                scheme=self.scheme,
+                api_key=os.getenv(self.api_key_env),
+                api_mode=self.api_mode,
             )
+
+            if raw_trace_hook is not None:
+                raw_trace_hook(
+                    LLMRawTrace(
+                        raw_input=raw_input,
+                        raw_output=raw_output,
+                    )
+                )
+
+            return raw_output
 
         if (input is not None and output is not None) and not messages:
             system_prompt = build_mdl_system_prompt(guidance or "", input, output)
             data_input: List[OpenAIMessage] = [
                 {"role": "user", "content": str(dataclass_to_dict(input))}
             ]
-            json_response = inf_open_ai_compat(
+
+            raw_input = f"SYSTEM:\n{system_prompt}\n\nMESSAGES:\n{data_input}"
+
+            raw_output = inf_open_ai_compat(
                 self.host,
                 self.port,
                 model_id,
                 data_input,
-                system_prompt,
+                system_message=system_prompt,
                 scheme=self.scheme,
                 api_key=os.getenv(self.api_key_env),
+                api_mode=self.api_mode,
             )
-            return parse_llm_json(json_response, output)
+
+            if raw_trace_hook is not None:
+                raw_trace_hook(
+                    LLMRawTrace(
+                        raw_input=raw_input,
+                        raw_output=raw_output,
+                    )
+                )
+
+            return parse_llm_json(raw_output, output)
 
         if (input is not None) ^ (output is not None):
             raise ValueError("Both `input` and `output` must be provided together.")
 
         raise ValueError("Provide either `messages` or (`input`, `output`).")
+
+    @property
+    def ready(self) -> bool:
+        return True

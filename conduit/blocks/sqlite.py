@@ -115,7 +115,6 @@ class Sqlite3Block[Input: SupportsDbAction](Block[Input, SqlOperation]):
         except Exception as e:
             raise RuntimeError(f"Unexpected error while loading schema: {e}")
 
-        # Introspect schema for validation (table -> set(columns))
         self._schema_map = self._introspect_schema()
 
         # If allowlist is provided, validate it

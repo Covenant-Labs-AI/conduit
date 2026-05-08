@@ -80,11 +80,13 @@ GpuTypeId = Literal[
     "NVIDIA H100 80GB HBM3",
     "NVIDIA RTX 4000 Ada Generation",
     "NVIDIA A100 80GB PCIe",
+    "NVIDIA A100-SXM4-40GB",
     "NVIDIA A100-SXM4-80GB",
     "NVIDIA RTX A4000",
     "NVIDIA RTX 6000 Ada Generation",
     "NVIDIA RTX 2000 Ada Generation",
     "NVIDIA H200",
+    "NVIDIA H200 NVL",
     "NVIDIA L40",
     "NVIDIA H100 NVL",
     "NVIDIA H100 PCIe",
@@ -107,6 +109,11 @@ GpuTypeId = Literal[
     "NVIDIA GeForce RTX 5080",
     "NVIDIA GeForce RTX 3090 Ti",
     "NVIDIA B200",
+    "NVIDIA B300 SXM6 AC",
+    "NVIDIA RTX PRO 4500 Blackwell",
+    "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+    "NVIDIA RTX PRO 6000 Blackwell Workstation Edition",
+    "NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition",
 ]
 
 
@@ -138,6 +145,9 @@ class GPUS:
     A100_80GB_PCIE: Final[
         Annotated[Literal["NVIDIA A100 80GB PCIe"], "VRAM: 80 GB"]
     ] = "NVIDIA A100 80GB PCIe"
+    A100_SXM4_40GB: Final[
+        Annotated[Literal["NVIDIA A100-SXM4-40GB"], "VRAM: 40 GB"]
+    ] = "NVIDIA A100-SXM4-40GB"
     A100_SXM4_80GB: Final[
         Annotated[Literal["NVIDIA A100-SXM4-80GB"], "VRAM: 80 GB"]
     ] = "NVIDIA A100-SXM4-80GB"
@@ -151,6 +161,9 @@ class GPUS:
         Annotated[Literal["NVIDIA RTX 2000 Ada Generation"], "VRAM: 16 GB"]
     ] = "NVIDIA RTX 2000 Ada Generation"
     H200: Final[Annotated[Literal["NVIDIA H200"], "VRAM: 141 GB"]] = "NVIDIA H200"
+    H200_NVL: Final[Annotated[Literal["NVIDIA H200 NVL"], "VRAM: 143 GB"]] = (
+        "NVIDIA H200 NVL"
+    )
     L40: Final[Annotated[Literal["NVIDIA L40"], "VRAM: 48 GB"]] = "NVIDIA L40"
     H100_NVL: Final[Annotated[Literal["NVIDIA H100 NVL"], "VRAM: 94 GB"]] = (
         "NVIDIA H100 NVL"
@@ -173,7 +186,7 @@ class GPUS:
     MI300X_OAM: Final[Annotated[Literal["AMD Instinct MI300X OAM"], "VRAM: 192 GB"]] = (
         "AMD Instinct MI300X OAM"
     )
-    RTX_A2000: Final[Annotated[Literal["NVIDIA RTX A2000"], "VRAM: 12 GB"]] = (
+    RTX_A2000: Final[Annotated[Literal["NVIDIA RTX A2000"], "VRAM: 6 GB"]] = (
         "NVIDIA RTX A2000"
     )
     V100_FHHL_16GB: Final[Annotated[Literal["Tesla V100-FHHL-16GB"], "VRAM: 16 GB"]] = (
@@ -211,6 +224,28 @@ class GPUS:
         Annotated[Literal["NVIDIA GeForce RTX 3090 Ti"], "VRAM: 24 GB"]
     ] = "NVIDIA GeForce RTX 3090 Ti"
     B200: Final[Annotated[Literal["NVIDIA B200"], "VRAM: 180 GB"]] = "NVIDIA B200"
+    B300_SXM6_AC: Final[Annotated[Literal["NVIDIA B300 SXM6 AC"], "VRAM: 288 GB"]] = (
+        "NVIDIA B300 SXM6 AC"
+    )
+    RTX_PRO_4500_BLACKWELL: Final[
+        Annotated[Literal["NVIDIA RTX PRO 4500 Blackwell"], "VRAM: 32 GB"]
+    ] = "NVIDIA RTX PRO 4500 Blackwell"
+    RTX_PRO_6000_BLACKWELL_SERVER_EDITION: Final[
+        Annotated[
+            Literal["NVIDIA RTX PRO 6000 Blackwell Server Edition"], "VRAM: 96 GB"
+        ]
+    ] = "NVIDIA RTX PRO 6000 Blackwell Server Edition"
+    RTX_PRO_6000_BLACKWELL_WORKSTATION_EDITION: Final[
+        Annotated[
+            Literal["NVIDIA RTX PRO 6000 Blackwell Workstation Edition"], "VRAM: 96 GB"
+        ]
+    ] = "NVIDIA RTX PRO 6000 Blackwell Workstation Edition"
+    RTX_PRO_6000_BLACKWELL_MAX_Q_WORKSTATION_EDITION: Final[
+        Annotated[
+            Literal["NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition"],
+            "VRAM: 96 GB",
+        ]
+    ] = "NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition"
 
 
 VRAM_GB_BY_GPU_ID: dict[str, int] = {
@@ -225,11 +260,13 @@ VRAM_GB_BY_GPU_ID: dict[str, int] = {
     "NVIDIA H100 80GB HBM3": 80,
     "NVIDIA RTX 4000 Ada Generation": 20,
     "NVIDIA A100 80GB PCIe": 80,
+    "NVIDIA A100-SXM4-40GB": 40,
     "NVIDIA A100-SXM4-80GB": 80,
     "NVIDIA RTX A4000": 16,
     "NVIDIA RTX 6000 Ada Generation": 48,
     "NVIDIA RTX 2000 Ada Generation": 16,
     "NVIDIA H200": 141,
+    "NVIDIA H200 NVL": 143,
     "NVIDIA L40": 48,
     "NVIDIA H100 NVL": 94,
     "NVIDIA H100 PCIe": 80,
@@ -238,7 +275,7 @@ VRAM_GB_BY_GPU_ID: dict[str, int] = {
     "NVIDIA GeForce RTX 3070": 8,
     "Tesla V100-PCIE-16GB": 16,
     "AMD Instinct MI300X OAM": 192,
-    "NVIDIA RTX A2000": 12,
+    "NVIDIA RTX A2000": 6,
     "Tesla V100-FHHL-16GB": 16,
     "NVIDIA GeForce RTX 4080 SUPER": 16,
     "Tesla V100-SXM2-16GB": 16,
@@ -252,6 +289,11 @@ VRAM_GB_BY_GPU_ID: dict[str, int] = {
     "NVIDIA GeForce RTX 5080": 16,
     "NVIDIA GeForce RTX 3090 Ti": 24,
     "NVIDIA B200": 180,
+    "NVIDIA B300 SXM6 AC": 288,
+    "NVIDIA RTX PRO 4500 Blackwell": 32,
+    "NVIDIA RTX PRO 6000 Blackwell Server Edition": 96,
+    "NVIDIA RTX PRO 6000 Blackwell Workstation Edition": 96,
+    "NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition": 96,
 }
 
 
@@ -443,7 +485,6 @@ class PodResponse:
 
 
 __all__ = [
-    # enums / constants
     "Category",
     "CudaVersion",
     "CloudType",

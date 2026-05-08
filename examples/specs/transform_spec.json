@@ -1,0 +1,28 @@
+{
+  "transform_calls": {
+    "lm_lite": {
+      "compute_hash": "unique-sha-hash-1",
+      "compute_provider": "RUNPOD",
+      "models": [
+        {
+          "model_id": "Qwen/Qwen3-4B-Instruct-2507-FP8",
+          "max_model_len": 16000,
+          "max_model_concurrency": 1,
+          "model_batch_execute_timeout_ms": 500
+        }
+      ],
+      "gpu": {
+        "name": "NVIDIA L4",
+        "gpu_count": 1
+      },
+      "replicas": 1,
+      "constraints": [],
+      "transforms": [
+        {
+          "id": "summarize_v1",
+          "model": "Qwen/Qwen3-4B-Instruct-2507-FP8"
+        }
+      ]
+    }
+  }
+}

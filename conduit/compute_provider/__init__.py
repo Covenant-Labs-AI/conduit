@@ -143,6 +143,7 @@ def get_compute_provider_start_params(
                 "gpuCount": num_gpus,
                 "ports": ports_list,
                 "env": env["env"],
+                "supportPublicIp": True,
             }
 
             pod_config = base_config | overrides

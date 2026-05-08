@@ -1,6 +1,6 @@
-from typing import Any, List, Tuple
+from dataclasses import dataclass, fields, is_dataclass
 from enum import Enum
-from dataclasses import dataclass, is_dataclass, fields
+from typing import Any, List, Tuple
 
 
 @dataclass
@@ -15,14 +15,24 @@ class ComputeOffering:
 
 def dataclass_to_dict(obj: Any) -> dict:
     """
-    Recursively convert a dataclass (or nested dataclass) into
-    a nested dict/list/primitive structure.
+    Recursively convert an initialized dataclass instance
+    (or nested dataclass instances) into a nested dict/list/primitive structure.
+
+    Raises:
+        TypeError: if given a dataclass type/class instead of an initialized instance.
     """
+    if isinstance(obj, type) and is_dataclass(obj):
+        raise TypeError(
+            f"dataclass_to_dict expected an initialized dataclass instance, "
+            f"but received the dataclass type '{obj.__name__}'. "
+            f"Pass an instance like {obj.__name__}(...) instead."
+        )
+
     if is_dataclass(obj):
         result = {}
         for f in fields(obj):
             value = getattr(obj, f.name)
-            result[f.name] = dataclass_to_dict(value)  # recurse
+            result[f.name] = dataclass_to_dict(value)
         return result
     elif isinstance(obj, (list, tuple)):
         return [dataclass_to_dict(v) for v in obj]

@@ -1,22 +1,22 @@
 import os
 import uuid
-from dataclasses import dataclass, asdict
-from typing import Optional, List, Dict, Any
+from dataclasses import asdict, dataclass
 from datetime import datetime
+from typing import Any, Dict, List, Optional
 
-from sqlmodel import (
-    SQLModel,
-    Field,
-    create_engine,
-    Session,
-    Relationship,
-    Column,
-    JSON,
-)
-from sqlalchemy.engine import Engine
-from sqlalchemy.engine.url import make_url, URL
 from sqlalchemy import event
+from sqlalchemy.engine import Engine
+from sqlalchemy.engine.url import URL, make_url
 from sqlalchemy.pool import StaticPool
+from sqlmodel import (
+    JSON,
+    Column,
+    Field,
+    Relationship,
+    Session,
+    SQLModel,
+    create_engine,
+)
 
 from conduit.conduit_types import (
     ComputeProvider,
@@ -174,13 +174,52 @@ def create_configured_engine(cfg: DBConfig) -> Engine:
     )
 
 
-_CFG = _load_config_from_env()
-ENGINE: Engine = create_configured_engine(_CFG)
+_CFG: Optional[DBConfig] = None
+ENGINE: Optional[Engine] = None
+
+
+def init_conduit(
+    *,
+    db_uri: Optional[str] = None,
+    engine: Optional[Engine] = None,
+    create_tables: bool = True,
+) -> Engine:
+    """
+    App calls this once at startup to inject DB state.
+    - Provide `engine` OR `db_uri` (or neither to use env defaults).
+    """
+    global _CFG, ENGINE
+
+    if engine is not None:
+        ENGINE = engine
+        _CFG = None
+    else:
+        cfg = _load_config_from_env()
+        if db_uri is not None:
+            cfg = DBConfig(
+                **{
+                    **cfg.summary(),
+                    "db_uri": db_uri,
+                    "dialect": make_url(db_uri).get_backend_name(),
+                }
+            )
+            # (or simpler: rebuild DBConfig explicitly; point is: override db_uri)
+        _CFG = cfg
+        ENGINE = create_configured_engine(cfg)
+
+    if create_tables:
+        Deployment.__table__.create(ENGINE, checkfirst=True)
+        Node.__table__.create(ENGINE, checkfirst=True)
+
+    return ENGINE
+
+
+def get_engine() -> Engine:
+    global ENGINE
+    if ENGINE is None:
+        init_conduit(create_tables=True)
+    return ENGINE
 
 
 def get_session() -> Session:
-    return Session(ENGINE)
-
-
-# TODO future releases will have migrations based on conduit version
-SQLModel.metadata.create_all(ENGINE)
+    return Session(get_engine())
