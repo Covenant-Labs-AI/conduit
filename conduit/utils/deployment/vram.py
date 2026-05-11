@@ -30,7 +30,6 @@ VLLM_OVERHEAD_PER_GPU_GB: float = 15.0
 def load_model_index_and_config(
     repo_id: str, revision: str | None = None
 ) -> Dict[str, Optional[Dict[str, Any]]]:
-    print("LOADING INEX AND CONFIG")
     """
     Downloads model.safetensors.index.json and config.json independently if they exist.
     Returns a dict with:
