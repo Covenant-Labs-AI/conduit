@@ -168,7 +168,6 @@ def test_local_nvidia(model_id: str = "Qwen/Qwen3-4B-Instruct-2507-FP8"):
     command_block = SystemCommandBlock(Command, timeout_seconds=5)
 
     if not lm_lite_block.ready:
-        print("not ready")
         return
 
     # Ask the model for a shell command to list the current directory (long format).

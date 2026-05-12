@@ -257,7 +257,6 @@ def try_build_llm_vram_profile_local(model: Any) -> LLMVramProfile:
     max_position_embeddings = text_config.get(
         "max_position_embeddings", config.get("max_position_embeddings")
     )
-    print(max_position_embeddings)
     requested_max_len = int(getattr(model, "max_model_len"))
     if max_position_embeddings is not None and requested_max_len > int(
         max_position_embeddings

@@ -446,7 +446,6 @@ class LMLiteBlock(LmInferenceBlock):
 
     def _get_model_config(self, model_id: str) -> LmLiteModelConfig:
         for model in self.models:
-            print(model, model_id)
             if model.id == model_id:
                 return model
         raise ValueError(f"Unknown model_id: {model_id}")
@@ -670,6 +669,19 @@ class VLLMBlock(LmInferenceBlock):
 
     _ports = "8000"
 
+    def __init__(
+        self,
+        *args,
+        image: str | None = None,
+        ports: str | None = None,
+        newt_config: dict | None = None,
+        **kwargs,
+    ):
+        self._image_override = image
+        self._ports_override = ports
+        self.newt_config = newt_config or {}
+        super().__init__(*args, **kwargs)
+
     @property
     def runtime(self) -> Runtime:
         return self._runtime
@@ -680,16 +692,31 @@ class VLLMBlock(LmInferenceBlock):
 
     @property
     def image(self) -> str:
-        return self._image
+        return self._image_override or self._image
 
     @property
     def ports(self) -> str:
-        return self._ports
+        return self._ports_override or self._ports
 
     def build_env(self) -> EnvConfig:
         vllm_cfg = asdict(self.models[0])
 
-        return {"env": {"VLLM_CONFIG": json.dumps(vllm_cfg)}}
+        env = {
+            "VLLM_CONFIG": json.dumps(vllm_cfg),
+        }
+
+        newt_env_map = {
+            "server": "NEWT_SERVER",
+            "id": "NEWT_ID",
+            "secret": "NEWT_SECRET",
+        }
+
+        for key, env_key in newt_env_map.items():
+            value = self.newt_config.get(key)
+            if value:
+                env[env_key] = value
+
+        return {"env": env}
 
     def calculate_container_size_gb(self) -> int:
         """
