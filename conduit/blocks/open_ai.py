@@ -108,7 +108,7 @@ class OpenAICompatibleRuntimeBlock(Block[TIn, TOut]):
                 data_input,
                 system_message=system_prompt,
                 scheme=self.scheme,
-                api_key=os.getenv(self.api_key_env),
+                api_key=self.api_key,
                 api_mode=self.api_mode,
             )
 
