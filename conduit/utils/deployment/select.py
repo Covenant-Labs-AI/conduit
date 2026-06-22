@@ -865,8 +865,14 @@ def calculate_best_compute_offering_for_vllm(
         )
 
     if not candidates:
+        valid_tp_display = ", ".join(str(tp) for tp in valid_tps) or "unknown"
+
         raise RuntimeError(
-            "No feasible compute offering found for vLLM constraints and VRAM requirements."
+            "No feasible compute offering found for vLLM constraints and VRAM requirements. "
+            f"Required raw VRAM: {raw_total_vram_gb:.2f} GiB "
+            f"({model_vram_gb:.2f} GiB model weights + {kv_vram_gb:.2f} GiB KV cache). "
+            f"Additional vLLM overhead: {overhead_per_gpu_gb:.2f} GiB per GPU. "
+            f"Valid tensor-parallel sizes for this model: {valid_tp_display}."
         )
 
     candidates_sorted = sorted(candidates, key=lambda c: int(c.price))

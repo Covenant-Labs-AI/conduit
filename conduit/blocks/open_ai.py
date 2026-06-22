@@ -19,24 +19,19 @@ class OpenAICompatibleRuntimeBlock(Block[TIn, TOut]):
     def __init__(
         self,
         *,
+        api_key: str,
         host: str = "api.openai.com",
         port: int | None = 443,
         scheme: str = "https",
-        api_key_env: str = "OPENAI_API_KEY",
         require_api_key: bool = True,
         api_mode: str = "auto",  # "auto" | "responses" | "chat_completions"
     ) -> None:
-        if require_api_key and not os.getenv(api_key_env):
-            raise RuntimeError(
-                f"Missing API key: set {api_key_env} in the environment."
-            )
 
         if api_mode not in {"auto", "responses", "chat_completions"}:
             raise ValueError(
                 "api_mode must be one of: 'auto', 'responses', 'chat_completions'"
             )
-
-        self.api_key_env = api_key_env
+        self.api_key = api_key
         self.host = host
         self.port = port
         self.scheme = scheme
@@ -84,7 +79,7 @@ class OpenAICompatibleRuntimeBlock(Block[TIn, TOut]):
                 messages,
                 system_message=guidance,
                 scheme=self.scheme,
-                api_key=os.getenv(self.api_key_env),
+                api_key=self.api_key,
                 api_mode=self.api_mode,
             )
 
