@@ -4,6 +4,7 @@ import os
 import re
 from dataclasses import fields, is_dataclass
 from typing import Any, Dict, List, Optional, Type, TypeVar, Union, get_args, get_origin
+from enum import Enum
 from dataclasses import MISSING
 
 import psutil
@@ -353,6 +354,8 @@ def parse_llm_json(json_response: str, output_type: Type[TOut]) -> TOut:
     - attempts to extract the first JSON object/array if extra text is present
     - if the output dataclass has exactly one field and the model returns a bare
       top-level value compatible with that field, wraps it automatically
+    - coerces string values back into enums declared as:
+          class SomeEnum(str, Enum)
 
     Example:
         @dataclass
@@ -368,11 +371,13 @@ def parse_llm_json(json_response: str, output_type: Type[TOut]) -> TOut:
 
     def _is_optional_type(target_type: Any) -> bool:
         origin = get_origin(target_type)
+
         if origin is Union:
-            return any(t is type(None) for t in get_args(target_type))
+            return any(item_type is type(None) for item_type in get_args(target_type))
+
         return False
 
-    def _has_default(field_obj) -> bool:
+    def _has_default(field_obj: Any) -> bool:
         return (
             field_obj.default is not MISSING or field_obj.default_factory is not MISSING
         )
@@ -384,176 +389,179 @@ def parse_llm_json(json_response: str, output_type: Type[TOut]) -> TOut:
         if think_end in text:
             text = text.split(think_end, 1)[1].strip()
 
-        # Fast path
+        # Fast path: the entire response is valid JSON.
         try:
             json.loads(text)
             return text
         except json.JSONDecodeError:
             pass
 
-        # Try to extract from first { or [
-        starts = [i for i in (text.find("{"), text.find("[")) if i != -1]
+        # Attempt to extract a JSON object or array from extra text.
+        starts = [
+            index
+            for index in (
+                text.find("{"),
+                text.find("["),
+            )
+            if index != -1
+        ]
+
         if not starts:
             return text
 
-        candidate = text[min(starts) :].strip()
-        return candidate
+        return text[min(starts) :].strip()
+
+    def _coerce_enum(value: Any, enum_type: Type[Enum]) -> Enum:
+        if not issubclass(enum_type, str):
+            raise TypeError(
+                "Only enums declared as `class SomeEnum(str, Enum)` are supported"
+            )
+
+        if not all(isinstance(member.value, str) for member in enum_type):
+            raise TypeError(f"All values in enum {enum_type.__name__} must be strings")
+
+        if isinstance(value, enum_type):
+            return value
+
+        if not isinstance(value, str):
+            raise ValueError(
+                f"Expected a string for enum "
+                f"{enum_type.__name__}, got "
+                f"{type(value).__name__}"
+            )
+
+        try:
+            # Coerce using the enum value, not the enum member name.
+            return enum_type(value)
+        except ValueError as error:
+            allowed_values = [member.value for member in enum_type]
+
+            raise ValueError(
+                f"Invalid value {value!r} for enum "
+                f"{enum_type.__name__}. "
+                f"Allowed values: {allowed_values!r}"
+            ) from error
 
     def _coerce(value: Any, target_type: Any) -> Any:
         if value is None:
             if _is_optional_type(target_type):
                 return None
+
             return None
 
         origin = get_origin(target_type)
         args = get_args(target_type)
 
+        # Optional / Union
         if origin is Union:
-            non_none = [t for t in args if t is not type(None)]
+            non_none = [item_type for item_type in args if item_type is not type(None)]
+
             if len(non_none) == 1:
                 return _coerce(value, non_none[0])
 
-            last_err = None
-            for t in non_none:
-                try:
-                    return _coerce(value, t)
-                except Exception as e:
-                    last_err = e
-            raise ValueError(
-                f"Could not coerce {value!r} into {target_type}: {last_err}"
-            ) from last_err
+            last_error = None
 
+            for item_type in non_none:
+                try:
+                    return _coerce(value, item_type)
+                except (TypeError, ValueError) as error:
+                    last_error = error
+
+            raise ValueError(
+                f"Could not coerce {value!r} into {target_type}: {last_error}"
+            ) from last_error
+
+        # String-backed Enum
+        if isinstance(target_type, type) and issubclass(target_type, Enum):
+            return _coerce_enum(value, target_type)
+
+        # List
         if origin in (list, List):
-            (elem_type,) = args or (Any,)
+            (element_type,) = args or (Any,)
+
             if not isinstance(value, list):
                 raise ValueError(
                     f"Expected list for {target_type}, got {type(value).__name__}"
                 )
-            return [_coerce(v, elem_type) for v in value]
 
+            return [_coerce(item, element_type) for item in value]
+
+        # Dict
         if origin in (dict, Dict):
-            key_type, val_type = args or (Any, Any)
+            key_type, value_type = args or (Any, Any)
+
             if not isinstance(value, dict):
                 raise ValueError(
                     f"Expected dict for {target_type}, got {type(value).__name__}"
                 )
+
             return {
-                _coerce(k, key_type): _coerce(v, val_type) for k, v in value.items()
+                _coerce(key, key_type): _coerce(item, value_type)
+                for key, item in value.items()
             }
 
+        # Nested dataclass
         if is_dataclass(target_type):
             if not isinstance(value, dict):
                 raise ValueError(
-                    f"Expected object (dict) for {target_type.__name__}, got {type(value).__name__}"
+                    f"Expected object (dict) for "
+                    f"{target_type.__name__}, got "
+                    f"{type(value).__name__}"
                 )
 
             kwargs = {}
             missing_required = []
 
-            for f in fields(target_type):
-                if f.name in value:
-                    kwargs[f.name] = _coerce(value[f.name], f.type)
+            for field_obj in fields(target_type):
+                if field_obj.name in value:
+                    kwargs[field_obj.name] = _coerce(
+                        value[field_obj.name],
+                        field_obj.type,
+                    )
+                elif _has_default(field_obj):
+                    continue
+                elif _is_optional_type(field_obj.type):
+                    kwargs[field_obj.name] = None
                 else:
-                    if _has_default(f):
-                        continue
-                    if _is_optional_type(f.type):
-                        kwargs[f.name] = None
-                    else:
-                        missing_required.append(f.name)
+                    missing_required.append(field_obj.name)
 
             if missing_required:
                 raise ValueError(
-                    f"Missing required fields for {target_type.__name__}: "
-                    + ", ".join(sorted(missing_required))
+                    f"Missing required fields for "
+                    f"{target_type.__name__}: " + ", ".join(sorted(missing_required))
                 )
 
             return target_type(**kwargs)
 
         return value
 
-    def _repair_top_level_shape(data: Any, target_type: Type[TOut]) -> Any:
-        """
-        Safe repair rules only.
-
-        If the target is a dataclass with exactly one field, and the model returned a
-        bare value of the right general shape for that field, wrap it automatically.
-
-        Examples:
-            [{"x": 1}] -> {"items": [{"x": 1}]}
-            "hello"    -> {"result": "hello"}
-        """
-        if not is_dataclass(target_type):
-            return data
-
-        if isinstance(data, dict):
-            return data
-
-        top_fields = list(fields(target_type))
-        if len(top_fields) != 1:
-            return data
-
-        only_field = top_fields[0]
-        field_type = only_field.type
-        origin = get_origin(field_type)
-
-        # Safe wrapper for list field
-        if origin in (list, List) and isinstance(data, list):
-            return {only_field.name: data}
-
-        # Optional[List[T]] style wrapper
-        if origin is Union:
-            non_none = [t for t in get_args(field_type) if t is not type(None)]
-            if len(non_none) == 1:
-                inner = non_none[0]
-                inner_origin = get_origin(inner)
-                if inner_origin in (list, List) and isinstance(data, list):
-                    return {only_field.name: data}
-
-        return data
-
     if not is_dataclass(output_type):
         raise TypeError("output_type must be a dataclass type")
 
-    json_response = _extract_json_payload(json_response)
+    payload_text = _extract_json_payload(json_response)
 
     try:
-        data = json.loads(json_response)
-    except json.JSONDecodeError as e:
-        raise ValueError(
-            f"Invalid JSON from LLM: {e.msg}\n\nFull response:\n{json_response}"
-        ) from e
+        parsed_data = json.loads(payload_text)
+    except json.JSONDecodeError as error:
+        raise ValueError("The LLM response did not contain valid JSON") from error
 
-    repaired_data = _repair_top_level_shape(data, output_type)
+    output_fields = fields(output_type)
 
-    if not isinstance(repaired_data, dict):
-        top_fields = list(fields(output_type))
-        if len(top_fields) == 1:
-            expected = f'{{"{top_fields[0].name}": ...}}'
+    # Wrap a bare top-level value for a one-field dataclass.
+    #
+    # Example:
+    #     "active"
+    #
+    # Becomes:
+    #     {"status": "active"}
+    if not isinstance(parsed_data, dict):
+        if len(output_fields) == 1:
+            parsed_data = {output_fields[0].name: parsed_data}
         else:
-            expected = "top-level JSON object"
-        raise ValueError(
-            f"Expected top-level JSON object for {output_type.__name__}, "
-            f"got {type(repaired_data).__name__}. Expected shape like {expected}"
-        )
+            raise ValueError(
+                f"Expected top-level JSON object for "
+                f"{output_type.__name__}, got "
+                f"{type(parsed_data).__name__}"
+            )
 
-    output_fields = {f.name for f in fields(output_type)}
-    missing = []
-    for f in fields(output_type):
-        if (
-            f.name not in repaired_data
-            and not _has_default(f)
-            and not _is_optional_type(f.type)
-        ):
-            missing.append(f.name)
-
-    if missing:
-        raise ValueError(
-            f"Missing expected fields in LLM response: {', '.join(sorted(missing))}"
-        )
-
-    try:
-        return _coerce(repaired_data, output_type)
-    except Exception as e:
-        raise ValueError(
-            f"Failed to deserialize LLM JSON into {output_type.__name__}: {e}"
-        ) from e
+    return _coerce(parsed_data, output_type)

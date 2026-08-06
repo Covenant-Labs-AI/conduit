@@ -1,10 +1,14 @@
 from dataclasses import dataclass, fields, is_dataclass, asdict
-
+from collections.abc import Mapping as ABCMapping
+import inspect
+from enum import Enum
+import json
 from typing import (
     Any,
     Optional,
     Tuple,
     Union,
+    Type,
     Mapping,
     List,
     Dict,
@@ -54,113 +58,196 @@ _NONE = type(None)
 _PRIMITIVES = {str, int, float, bool, _NONE}
 
 
-def compile_mdl(dataclass_generic: Any) -> List[str]:
+def _is_union_origin(origin: Any) -> bool:
+    return origin is Union
+
+
+def _is_enum_type(target_type: Any) -> bool:
+    return isinstance(target_type, type) and issubclass(target_type, Enum)
+
+
+def _is_supported_string_enum(target_type: Any) -> bool:
     """
-    Convert a Python dataclass into Model Data Language (MDL).
+    MDL only supports enums declared in the following form:
 
-    Model Data Language (MDL) is a schema-like representation of the
-    shape and types of structured data. It provides a human-readable,
-    standardized way of describing Python data models based on type
-    hints and dataclass fields.
+        class SomeEnum(str, Enum):
+            VALUE = "value"
 
-    Key ideas:
-      - **Primitives** like str, int, float, bool are preserved directly.
-      - **Composites** (List, Dict, Tuple, Union/Optional) are expanded
-        into a consistent textual form.
-      - **Nested dataclasses** are unfolded into dictionary-like
-        structures that expose their inner fields.
-      - **Unknowns (Any)** are represented as `Any`.
+    A plain Enum containing string values is intentionally not supported:
 
-    This makes MDL useful for:
-      - Documenting data structures clearly.
-      - Sharing schema definitions outside of Python.
-      - Ensuring consistent type-safe mappings for configs, APIs, or ML models.
+        class SomeEnum(Enum):
+            VALUE = "value"
+    """
+    if not _is_enum_type(target_type):
+        return False
+
+    if not issubclass(target_type, str):
+        return False
+
+    return all(isinstance(member.value, str) for member in target_type)
+
+
+def _enum_mdl(enum_type: Type[Enum]) -> str:
+    """
+    Render a string-backed enum using its allowed values.
 
     Example:
-        >>> from dataclasses import dataclass
-        >>> from typing import List, Optional
 
-        >>> @dataclass
-        ... class User:
-        ...     id: int
-        ...     name: str
-        ...     tags: Optional[List[str]]
+        class Status(str, Enum):
+            ACTIVE = "active"
+            PAUSED = "paused"
 
-        >>> compile_mdl(User)
-        ['id: int', 'name: str', 'tags: Optional[List[str]]']
+    Produces:
+
+        Enum["active", "paused"]
+    """
+    if not _is_supported_string_enum(enum_type):
+        raise TypeError(
+            "MDL only supports string enums declared as `class SomeEnum(str, Enum)`"
+        )
+
+    enum_values = ", ".join(
+        json.dumps(member.value, ensure_ascii=False) for member in enum_type
+    )
+
+    return f"Enum[{enum_values}]"
+
+
+def compile_mdl(dataclass_generic: Any) -> List[str]:
+    """
+    Convert a Python dataclass into Model Data Language.
+
+    Supported types:
+      - str
+      - int
+      - float
+      - bool
+      - Optional
+      - Union
+      - List
+      - Dict / Mapping
+      - Tuple
+      - Nested dataclasses
+      - String-backed enums declared as `class SomeEnum(str, Enum)`
+
+    Enum example:
+
+        class Status(str, Enum):
+            ACTIVE = "active"
+            PAUSED = "paused"
+
+        @dataclass
+        class Result:
+            status: Status
+
+        compile_mdl(Result)
+
+    Produces:
+
+        ['status: Enum["active", "paused"]']
+
+    Args:
+        dataclass_generic:
+            The dataclass type to compile.
 
     Returns:
-        List[str]: A list of strings, one per dataclass field,
-                   with its MDL type description.
+        A list containing one MDL declaration per dataclass field.
+
+    Raises:
+        AssertionError:
+            If the supplied object is not a dataclass.
+
+        TypeError:
+            If the schema contains an unsupported type.
     """
-    assert is_dataclass(dataclass_generic), "output_generic must be a dataclass type"
+    assert is_dataclass(dataclass_generic), "dataclass_generic must be a dataclass type"
 
-    def is_prim(t) -> bool:
-        return t in _PRIMITIVES
+    def primitive_name(target_type: Any) -> str:
+        if target_type is _NONE:
+            raise TypeError("MDL does not support None as an explicit field type")
 
-    def prim_name(t) -> str:
-        if t is _NONE:
-            raise TypeError("MDL does not support None as a explict type")
-        else:
-            return t.__name__
+        return target_type.__name__
 
-    def reduce_type(t) -> str:
-        origin = get_origin(t)
-        args = get_args(t)
+    def reduce_type(target_type: Any) -> str:
+        origin = get_origin(target_type)
+        args = get_args(target_type)
 
-        if origin is Union:
-            non_none = [a for a in args if a is not _NONE]
-            parts = [reduce_type(a) for a in non_none]
-            has_none = len(non_none) != len(args)
+        # Union and Optional
+        if _is_union_origin(origin):
+            non_none_types = [argument for argument in args if argument is not _NONE]
+
+            has_none = len(non_none_types) != len(args)
+
+            reduced_parts = [reduce_type(argument) for argument in non_none_types]
 
             if has_none:
-                inner = (
-                    parts[0] if len(parts) == 1 else "Union[" + ", ".join(parts) + "]"
-                )
+                if len(reduced_parts) == 1:
+                    inner = reduced_parts[0]
+                else:
+                    inner = "Union[" + ", ".join(reduced_parts) + "]"
+
                 return f"Optional[{inner}]"
 
-            return "Union[" + ", ".join(parts) + "]"
+            return "Union[" + ", ".join(reduced_parts) + "]"
 
         # List
         if origin in (list, List):
-            (inner,) = args or (Any,)
-            return f"List[{reduce_type(inner)}]"
+            (inner_type,) = args or (Any,)
+            return f"List[{reduce_type(inner_type)}]"
 
-        # Dict / Mapping
-        if origin in (dict, Dict, Mapping):
-            k, v = (args + (Any, Any))[:2]
-            return f"Dict[{reduce_type(k)}, {reduce_type(v)}]"
+        # Dict and Mapping
+        if origin in (
+            dict,
+            Dict,
+            Mapping,
+            ABCMapping,
+        ):
+            key_type, value_type = (args + (Any, Any))[:2]
+
+            return f"Dict[{reduce_type(key_type)}, {reduce_type(value_type)}]"
 
         # Tuple
         if origin in (tuple, Tuple):
             if args and args[-1] is Ellipsis:
                 return f"Tuple[{reduce_type(args[0])}, ...]"
+
             if args:
-                return "Tuple[" + ", ".join(reduce_type(a) for a in args) + "]"
+                return (
+                    "Tuple["
+                    + ", ".join(reduce_type(argument) for argument in args)
+                    + "]"
+                )
+
             return "Tuple[Any, ...]"
 
-        # Dataclass -> Dict{field: type, ...}
-        if isinstance(t, type) and is_dataclass(t):
-            # render each field with reduced type
-            items = []
-            for f in fields(t):
-                items.append(f"{f.name}: {reduce_type(f.type)}")
-            inner = ", ".join(items) if items else "/* empty */"
+        # Enum
+        if _is_enum_type(target_type):
+            return _enum_mdl(target_type)
+
+        # Nested dataclass
+        if isinstance(target_type, type) and is_dataclass(target_type):
+            inner_fields = [
+                f"{field.name}: {reduce_type(field.type)}"
+                for field in fields(target_type)
+            ]
+
+            inner = ", ".join(inner_fields) if inner_fields else "/* empty */"
+
             return f"Dict{{{inner}}}"
 
         # Primitive leaves
-        if is_prim(t):
-            return prim_name(t)
+        if target_type in _PRIMITIVES:
+            return primitive_name(target_type)
 
-        # Any / unknown -> Any
-        if t is Any:
+        # Explicit Any remains unsupported.
+        if target_type is Any:
             raise TypeError(
-                "MDL does not supprt Any as a datatype please choose a valid datatype"
+                "MDL does not support Any as a datatype; choose a concrete datatype"
             )
-        return ""
 
-    lines = []
-    for f in fields(dataclass_generic):
-        lines.append(f"{f.name}: {reduce_type(f.type)}")
+        raise TypeError(f"MDL does not support datatype {target_type!r}")
 
-    return lines
+    return [
+        f"{field.name}: {reduce_type(field.type)}"
+        for field in fields(dataclass_generic)
+    ]
