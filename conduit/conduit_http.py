@@ -194,6 +194,7 @@ def inf_open_ai_compat(
     api_key: str | None = "default-placeholder",
     api_mode: str = "auto",
     max_tokens: int | None = None,
+    request_kwargs: dict[str, Any] | None = None,
 ) -> str:
     completion = inf_open_ai_compat_completion(
         host=host,
@@ -205,6 +206,7 @@ def inf_open_ai_compat(
         api_key=api_key,
         api_mode=api_mode,
         max_tokens=max_tokens,
+        request_kwargs=request_kwargs,
     )
 
     return completion.require_content()
@@ -220,6 +222,7 @@ def inf_open_ai_compat_completion(
     api_key: str | None = "default-placeholder",
     api_mode: str = "auto",
     max_tokens: int | None = None,
+    request_kwargs: dict[str, Any] | None = None,
 ) -> LLMCompletion:
     _validate_messages(messages)
 
@@ -234,19 +237,37 @@ def inf_open_ai_compat_completion(
     final_messages = _with_system_message(messages, system_message)
 
     if api_mode == "responses":
-        return _call_responses_api(client, model_id, final_messages)
+        return _call_responses_api(
+            client,
+            model_id,
+            final_messages,
+            request_kwargs=request_kwargs,
+        )
 
     if api_mode == "chat_completions":
         return _call_chat_completions_api(
-            client, model_id, final_messages, max_tokens=max_tokens
+            client,
+            model_id,
+            final_messages,
+            max_tokens=max_tokens,
+            request_kwargs=request_kwargs,
         )
 
     try:
-        return _call_responses_api(client, model_id, final_messages)
+        return _call_responses_api(
+            client,
+            model_id,
+            final_messages,
+            request_kwargs=request_kwargs,
+        )
     except (NotFoundError, BadRequestError, APIError) as exc:
         if _should_fallback_to_chat(exc):
             return _call_chat_completions_api(
-                client, model_id, final_messages, max_tokens=max_tokens
+                client,
+                model_id,
+                final_messages,
+                max_tokens=max_tokens,
+                request_kwargs=request_kwargs,
             )
         raise
 
@@ -293,11 +314,18 @@ def _call_responses_api(
     client: OpenAI,
     model_id: str,
     messages: List[OpenAIMessage],
+    *,
+    request_kwargs: dict[str, Any] | None = None,
 ) -> LLMCompletion:
-    response = client.responses.create(
-        model=model_id,
-        input=messages,
-    )
+    request: dict[str, Any] = {
+        "model": model_id,
+        "input": messages,
+    }
+
+    if request_kwargs:
+        request.update(request_kwargs)
+
+    response = client.responses.create(**request)
 
     content = getattr(response, "output_text", None)
 
@@ -322,6 +350,7 @@ def _call_chat_completions_api(
     messages: List[OpenAIMessage],
     *,
     max_tokens: int | None = None,
+    request_kwargs: dict[str, Any] | None = None,
 ) -> LLMCompletion:
 
     request: dict[str, Any] = {
@@ -331,6 +360,9 @@ def _call_chat_completions_api(
 
     if max_tokens is not None:
         request["max_tokens"] = max_tokens
+
+    if request_kwargs:
+        request.update(request_kwargs)
 
     response = client.chat.completions.create(**request)
 
