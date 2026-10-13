@@ -97,14 +97,50 @@ def _enum_mdl(enum_type: Type[Enum]) -> str:
     return f"Enum[{enum_values}]"
 
 
-def _resolved_dataclass_fields(dataclass_type: Any):
-    """Yield (field name, resolved type) pairs, including postponed annotations.
+def _get_resolved_hints(dataclass_type: Any):
+    """Resolve postponed annotations, even for some dynamically loaded modules.
 
-    get_type_hints resolves strings produced by
-    ``from __future__ import annotations`` and ordinary forward references.
-    Referenced names must be resolvable in the defining module's namespace.
+    Python normally looks up forward references in the defining module via
+    sys.modules. Dynamically loaded code may have a live globals dictionary
+    without a registered module. In that case, try the call-site namespace
+    belonging to the exact dataclass being compiled.
+
+    An unavailable namespace cannot always be reconstructed from a class;
+    unresolvable forward references still raise NameError.
     """
-    hints = get_type_hints(dataclass_type)
+    try:
+        return get_type_hints(dataclass_type)
+    except NameError:
+        pass
+
+    frame = inspect.currentframe()
+    try:
+        frame = frame.f_back
+        while frame is not None:
+            for namespace in (frame.f_globals, frame.f_locals):
+                if namespace.get(dataclass_type.__name__) is not dataclass_type:
+                    continue
+                # Local names can also contain forward-referenced types.
+                resolved_namespace = dict(frame.f_globals)
+                resolved_namespace.update(frame.f_locals)
+                try:
+                    return get_type_hints(
+                        dataclass_type,
+                        globalns=resolved_namespace,
+                        localns=resolved_namespace,
+                    )
+                except NameError:
+                    continue
+            frame = frame.f_back
+    finally:
+        del frame
+
+    # Preserve the original exception and message for missing references.
+    return get_type_hints(dataclass_type)
+
+
+def _resolved_dataclass_fields(dataclass_type: Any):
+    hints = _get_resolved_hints(dataclass_type)
     for field in fields(dataclass_type):
         yield field.name, hints[field.name]
 
