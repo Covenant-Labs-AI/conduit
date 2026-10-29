@@ -13,7 +13,6 @@ from typing import (
 
 from .block_types import Block
 
-
 DbOp = Literal["insert", "insert_many", "update", "delete", "select"]
 
 
@@ -132,14 +131,12 @@ class Sqlite3Block[Input: SupportsDbAction](Block[Input, SqlOperation]):
         Build a map of {table_name: {column_name, ...}} from sqlite_master + PRAGMA table_info.
         """
         tables = []
-        self.cursor.execute(
-            """
+        self.cursor.execute("""
             SELECT name
             FROM sqlite_master
             WHERE type='table'
               AND name NOT LIKE 'sqlite_%'
-            """
-        )
+            """)
         for row in self.cursor.fetchall():
             tables.append(row[0])
 

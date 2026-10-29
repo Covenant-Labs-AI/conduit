@@ -9,7 +9,6 @@ from typing import (
 from dataclasses import dataclass, is_dataclass
 from typing import Type, TypeVar
 
-
 I = TypeVar("I")
 O = TypeVar("O")
 

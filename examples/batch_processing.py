@@ -7,7 +7,6 @@ from conduit.compute_provider.runpod import GPUS
 from conduit.runtime import LMLiteBlock
 from conduit import LmLiteModelConfig, ComputeProvider
 
-
 # -----------------------------------------------------------------------------
 # Demo: High-throughput batch inference on Runpod GPUs with LMLite (concurrency + replicas)
 #

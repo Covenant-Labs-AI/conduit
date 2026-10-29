@@ -56,7 +56,7 @@ class LocalProvider(ContainerRuntimeProvider):
 
     @staticmethod
     def _normalize_ports_and_public_ip(
-        attrs: Dict[str, Any]
+        attrs: Dict[str, Any],
     ) -> tuple[Dict[str, int], str | None]:
         raw_ports = attrs.get("NetworkSettings", {}).get("Ports", {}) or {}
         ports: Dict[str, int] = {}
